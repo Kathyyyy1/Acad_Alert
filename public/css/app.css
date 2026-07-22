@@ -1,0 +1,558 @@
+/* ========================================
+   ACADALERT - Custom CSS
+   Universidad de Dagupan
+   ======================================== */
+
+/* ---------- Global Reset ---------- */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: #f8f9fc;
+    color: #333;
+    overflow-x: hidden;
+}
+
+/* ---------- Navbar ---------- */
+.navbar {
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    padding: 0.5rem 1rem;
+    height: 60px;
+    z-index: 1050;
+}
+
+.navbar-brand {
+    font-weight: 700;
+    font-size: 1.25rem;
+}
+
+.navbar-brand small {
+    font-weight: 300;
+    font-size: 0.75rem;
+}
+
+/* ---------- Sidebar ---------- */
+#sidebar-wrapper {
+    width: 250px;
+    min-height: 100vh;
+    margin-top: 60px;
+    background: #1a1a2e;
+    background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
+    transition: margin-left 0.3s ease;
+    flex-shrink: 0;
+    position: sticky;
+    top: 60px;
+    height: calc(100vh - 60px);
+    overflow-y: auto;
+    z-index: 1000;
+}
+
+#sidebar-wrapper .sidebar-heading {
+    font-size: 1.1rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    padding: 1.2rem 0;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+
+#sidebar-wrapper .list-group-item {
+    padding: 0.75rem 1.5rem;
+    font-size: 0.9rem;
+    transition: all 0.2s ease;
+    border-left: 3px solid transparent;
+}
+
+#sidebar-wrapper .list-group-item:hover {
+    background: rgba(255,255,255,0.1) !important;
+    border-left-color: #4e73df;
+}
+
+#sidebar-wrapper .list-group-item.active-sidebar {
+    background: rgba(78, 115, 223, 0.2) !important;
+    border-left-color: #4e73df;
+    color: #fff !important;
+}
+
+#sidebar-wrapper .list-group-item i {
+    width: 20px;
+    text-align: center;
+}
+
+#sidebar-wrapper .sidebar-footer {
+    position: sticky;
+    bottom: 0;
+    background: rgba(0,0,0,0.2);
+}
+
+/* ---------- Page Content ---------- */
+#page-content-wrapper {
+    margin-top: 60px;
+    min-height: calc(100vh - 60px);
+    padding: 0;
+}
+
+/* ---------- Cards ---------- */
+.card {
+    border: none;
+    border-radius: 10px;
+    box-shadow: 0 0.15rem 1.75rem 0 rgba(58, 59, 69, 0.1);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 0.5rem 2rem 0 rgba(58, 59, 69, 0.15);
+}
+
+.card-header {
+    background: transparent;
+    border-bottom: 1px solid rgba(0,0,0,0.05);
+    padding: 1rem 1.25rem;
+    font-weight: 600;
+}
+
+.card-header i {
+    margin-right: 0.5rem;
+}
+
+/* ---------- Stats Cards ---------- */
+.stat-card {
+    border-radius: 10px;
+    padding: 1.25rem;
+    color: #fff;
+}
+
+.stat-card .stat-icon {
+    font-size: 2.5rem;
+    opacity: 0.4;
+}
+
+.stat-card .stat-number {
+    font-size: 2rem;
+    font-weight: 700;
+}
+
+.stat-card .stat-label {
+    font-size: 0.85rem;
+    opacity: 0.8;
+}
+
+.stat-card.primary { background: linear-gradient(135deg, #4e73df, #224abe); }
+.stat-card.success { background: linear-gradient(135deg, #1cc88a, #13855c); }
+.stat-card.warning { background: linear-gradient(135deg, #f6c23e, #dda20a); }
+.stat-card.danger { background: linear-gradient(135deg, #e74a3b, #be2617); }
+.stat-card.info { background: linear-gradient(135deg, #36b9cc, #258391); }
+.stat-card.purple { background: linear-gradient(135deg, #6f42c1, #4a1d8a); }
+
+/* ---------- Tables ---------- */
+.table-responsive {
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.table {
+    margin-bottom: 0;
+}
+
+.table thead th {
+    background: #f8f9fc;
+    border-bottom: 2px solid #e3e6f0;
+    font-weight: 600;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #4e73df;
+    padding: 0.75rem 1rem;
+}
+
+.table tbody td {
+    padding: 0.75rem 1rem;
+    vertical-align: middle;
+    font-size: 0.9rem;
+}
+
+.table tbody tr {
+    transition: background 0.15s ease;
+}
+
+.table tbody tr:hover {
+    background: #f8f9fc;
+}
+
+/* ---------- Badge Colors for Risk Levels ---------- */
+.badge-risk-low {
+    background-color: #28a745;
+    color: #fff;
+}
+
+.badge-risk-moderate {
+    background-color: #ffc107;
+    color: #212529;
+}
+
+.badge-risk-high {
+    background-color: #dc3545;
+    color: #fff;
+}
+
+.badge-risk-critical {
+    background-color: #6f42c1;
+    color: #fff;
+}
+
+/* ---------- Charts ---------- */
+.chart-container {
+    position: relative;
+    height: 250px;
+    width: 100%;
+}
+
+.chart-container canvas {
+    width: 100% !important;
+    height: 100% !important;
+}
+
+/* ---------- Alerts ---------- */
+.alert {
+    border-radius: 10px;
+    border: none;
+}
+
+.alert-success {
+    background: #d4edda;
+    color: #155724;
+}
+
+.alert-danger {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+.alert-warning {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.alert-info {
+    background: #d1ecf1;
+    color: #0c5460;
+}
+
+/* ---------- Forms ---------- */
+.form-control, .form-select {
+    border-radius: 8px;
+    border: 1px solid #d1d3e2;
+    padding: 0.6rem 1rem;
+    font-size: 0.9rem;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.form-control:focus, .form-select:focus {
+    border-color: #4e73df;
+    box-shadow: 0 0 0 0.2rem rgba(78, 115, 223, 0.25);
+}
+
+.form-label {
+    font-weight: 500;
+    font-size: 0.9rem;
+    color: #4a4a5a;
+}
+
+.btn {
+    border-radius: 8px;
+    padding: 0.6rem 1.2rem;
+    font-weight: 500;
+    font-size: 0.9rem;
+    transition: all 0.2s ease;
+}
+
+.btn-primary {
+    background: #4e73df;
+    border: none;
+}
+
+.btn-primary:hover {
+    background: #224abe;
+    transform: translateY(-1px);
+}
+
+.btn-success {
+    background: #1cc88a;
+    border: none;
+}
+
+.btn-success:hover {
+    background: #13855c;
+    transform: translateY(-1px);
+}
+
+.btn-danger {
+    background: #e74a3b;
+    border: none;
+}
+
+.btn-danger:hover {
+    background: #be2617;
+    transform: translateY(-1px);
+}
+
+.btn-warning {
+    background: #f6c23e;
+    border: none;
+    color: #212529;
+}
+
+.btn-warning:hover {
+    background: #dda20a;
+    transform: translateY(-1px);
+}
+
+.btn-sm {
+    padding: 0.3rem 0.6rem;
+    font-size: 0.8rem;
+}
+
+/* ---------- Pagination ---------- */
+.pagination .page-link {
+    border: none;
+    border-radius: 8px;
+    margin: 0 2px;
+    color: #4e73df;
+    font-weight: 500;
+}
+
+.pagination .page-link:hover {
+    background: #e3e6f0;
+    color: #224abe;
+}
+
+.pagination .page-item.active .page-link {
+    background: #4e73df;
+    color: #fff;
+}
+
+/* ---------- Footer ---------- */
+footer {
+    margin-left: 250px;
+    background: #fff !important;
+    border-top: 1px solid #e3e6f0 !important;
+}
+
+/* ============================================ */
+/* STEP 6: PROGRESS BAR ANIMATION & STYLES */
+/* ============================================ */
+
+/* Progress Bar Animation */
+.progress-bar-animated {
+    transition: width 0.5s ease-in-out;
+}
+
+/* Progress Container */
+#progressContainer .list-group-item {
+    border-left: none;
+    border-right: none;
+}
+
+#progressContainer .list-group-item:first-child {
+    border-top: none;
+}
+
+#progressContainer .list-group-item:last-child {
+    border-bottom: none;
+}
+
+/* Status Badge Animation */
+.badge-spin {
+    display: inline-block;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* ============================================ */
+/* END OF STEP 6 CSS */
+/* ============================================ */
+
+/* ---------- Responsive Design ---------- */
+
+/* Tablets and smaller laptops */
+@media (max-width: 992px) {
+    #sidebar-wrapper {
+        margin-left: -250px;
+        width: 250px;
+        height: 100vh;
+        position: fixed;
+        top: 0;
+        left: 0;
+        z-index: 1050;
+        transition: margin-left 0.3s ease;
+    }
+    
+    #sidebar-wrapper.show {
+        margin-left: 0;
+    }
+    
+    footer {
+        margin-left: 0;
+    }
+}
+
+/* Mobile phones */
+@media (max-width: 768px) {
+    .navbar-brand span {
+        font-size: 1rem;
+    }
+    
+    .navbar-brand small {
+        display: none;
+    }
+    
+    .stat-card .stat-number {
+        font-size: 1.5rem;
+    }
+    
+    .stat-card .stat-icon {
+        font-size: 1.8rem;
+    }
+    
+    .chart-container {
+        height: 200px;
+    }
+    
+    .card {
+        margin-bottom: 1rem;
+    }
+    
+    .table-responsive {
+        border-radius: 0;
+    }
+    
+    /* Table → Card view on mobile */
+    .table-mobile-cards tbody tr {
+        display: block;
+        margin-bottom: 1rem;
+        border: 1px solid #e3e6f0;
+        border-radius: 10px;
+        padding: 1rem;
+        background: #fff;
+    }
+    
+    .table-mobile-cards thead {
+        display: none;
+    }
+    
+    .table-mobile-cards tbody td {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.4rem 0;
+        border: none;
+        font-size: 0.85rem;
+    }
+    
+    .table-mobile-cards tbody td::before {
+        content: attr(data-label);
+        font-weight: 600;
+        color: #4a4a5a;
+    }
+    
+    .table-mobile-cards tbody td:last-child {
+        border-bottom: none;
+    }
+}
+
+/* Small phones */
+@media (max-width: 576px) {
+    .container-fluid {
+        padding: 0 10px;
+    }
+    
+    .stat-card {
+        padding: 0.75rem;
+    }
+    
+    .stat-card .stat-number {
+        font-size: 1.2rem;
+    }
+    
+    .btn {
+        padding: 0.4rem 0.8rem;
+        font-size: 0.8rem;
+    }
+    
+    /* Bottom navigation for mobile */
+    .mobile-bottom-nav {
+        display: flex !important;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: #fff;
+        border-top: 1px solid #e3e6f0;
+        padding: 0.5rem 0;
+        z-index: 1050;
+        justify-content: space-around;
+    }
+    
+    .mobile-bottom-nav .nav-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        font-size: 0.6rem;
+        color: #6c757d;
+        text-decoration: none;
+        padding: 0.25rem 0.5rem;
+        min-width: 44px;
+        min-height: 44px;
+    }
+    
+    .mobile-bottom-nav .nav-item i {
+        font-size: 1.2rem;
+        margin-bottom: 0.15rem;
+    }
+    
+    .mobile-bottom-nav .nav-item.active {
+        color: #4e73df;
+    }
+}
+
+/* ---------- Utility Classes ---------- */
+.text-primary-custom { color: #4e73df; }
+.bg-primary-custom { background: #4e73df; }
+
+.text-gray-300 { color: #dddfeb; }
+.text-gray-500 { color: #858796; }
+.text-gray-800 { color: #2d3748; }
+
+.shadow-custom { box-shadow: 0 0.15rem 1.75rem 0 rgba(58, 59, 69, 0.1); }
+
+.rounded-10 { border-radius: 10px; }
+
+.cursor-pointer { cursor: pointer; }
+
+/* ---------- Scrollbar Styling ---------- */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #c1c7d0;
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #a0a7b0;
+}
+
