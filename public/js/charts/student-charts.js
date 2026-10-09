@@ -1,7 +1,3 @@
-// ========================================
-// ACADALERT - Student Charts (Enhanced)
-// Step 18: Full Frontend Integration
-// ========================================
 
 console.log('[Student Charts] Loading...');
 
@@ -32,7 +28,6 @@ function loadRiskTrend() {
     }
 
     console.log('[Student Charts] Fetching student risk trend data...');
-    // FIXED: Changed from /api/charts/student/ to /charts/student/
     const url = '/charts/student/risk-trend';
 
     fetchChartData(url)
@@ -54,18 +49,25 @@ function loadRiskTrend() {
                 return;
             }
 
-            // Check if data shows "No Data" message from API
             if (data.labels && data.labels.length === 1 && data.labels[0] === 'No Data') {
                 showFallbackMessage(canvas, 'No risk data available. Complete at least one grading period.');
                 return;
             }
+
+            /* CHANGED: Use the OCEAN accent for the student's non-categorical score trend. */
+            data.datasets.forEach(dataset => {
+                dataset.borderColor = window.COLORS.accent;
+                dataset.backgroundColor = 'rgba(41, 173, 178, 0.12)';
+                dataset.pointBackgroundColor = window.COLORS.accent;
+            });
 
             const config = {
                 type: 'line',
                 data: data,
                 options: {
                     responsive: true,
-                    maintainAspectRatio: true,
+                    /* CHANGED: Fit the responsive parent rather than inheriting a fixed ratio. */
+                    maintainAspectRatio: false,
                     plugins: {
                         legend: {
                             display: false
@@ -82,7 +84,7 @@ function loadRiskTrend() {
                         y: {
                             min: 0,
                             max: 100,
-                            grid: { color: 'rgba(0,0,0,0.05)' },
+                            grid: { color: chartGridColor },
                             ticks: {
                                 stepSize: 20
                             }
@@ -115,10 +117,8 @@ function loadSubjectGrades() {
 
     console.log('[Student Charts] Fetching subject grades data...');
     
-    // Get current period from URL or default to Midterm
     const urlParams = new URLSearchParams(window.location.search);
     const period = urlParams.get('period') || 'Midterm';
-    // FIXED: Changed from /api/charts/student/ to /charts/student/
     const url = `/charts/student/grades?period=${period}`;
 
     fetchChartData(url)
@@ -134,7 +134,6 @@ function loadSubjectGrades() {
                 return;
             }
 
-            // Check if data shows "No Data" message from API
             if (data.labels && data.labels.length === 1 && data.labels[0] === 'No Data') {
                 showFallbackMessage(canvas, 'No grades available for this period.');
                 return;
@@ -146,12 +145,21 @@ function loadSubjectGrades() {
                 return;
             }
 
+            /* CHANGED: Keep grade bars on the shared OCEAN series palette. */
+            data.datasets.forEach(dataset => {
+                dataset.backgroundColor = window.COLORS.primary;
+                dataset.borderColor = window.COLORS.accent;
+                dataset.borderWidth = 1;
+                dataset.borderRadius = 5;
+            });
+
             const config = {
                 type: 'bar',
                 data: data,
                 options: {
                     responsive: true,
-                    maintainAspectRatio: true,
+                    /* CHANGED: Fit the responsive parent rather than inheriting a fixed ratio. */
+                    maintainAspectRatio: false,
                     indexAxis: 'y',
                     plugins: {
                         legend: {
@@ -169,7 +177,7 @@ function loadSubjectGrades() {
                         x: {
                             min: 0,
                             max: 100,
-                            grid: { color: 'rgba(0,0,0,0.05)' },
+                            grid: { color: chartGridColor },
                             title: {
                                 display: true,
                                 text: 'Grade %'
@@ -206,7 +214,6 @@ function showFallbackMessage(canvas, message) {
     }
 }
 
-// Load student charts when DOM is ready
 if (document.readyState === 'complete' || document.readyState === 'interactive') {
     if (document.querySelector('#studentRiskTrendChart, #subjectGradesChart')) {
         loadStudentCharts();

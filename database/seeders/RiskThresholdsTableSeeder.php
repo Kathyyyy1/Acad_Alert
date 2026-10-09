@@ -14,7 +14,6 @@ class RiskThresholdsTableSeeder extends Seeder
         DB::table('risk_thresholds')->truncate();
         Schema::enableForeignKeyConstraints();
         
-        // Get admin user ID
         $admin = DB::table('users')->where('role', 'admin')->first();
         $updatedBy = $admin ? $admin->id : 1;
         

@@ -7,6 +7,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
 use App\Services\RiskScoringService;
 
 class ProcessRiskScoringJob implements ShouldQueue
@@ -20,9 +21,6 @@ class ProcessRiskScoringJob implements ShouldQueue
     public $tries = 3;
     public $timeout = 300;
 
-    /**
-     * Create a new job instance.
-     */
     public function __construct(int $blockId, string $gradingPeriod, string $schoolYear)
     {
         $this->blockId = $blockId;
@@ -30,9 +28,6 @@ class ProcessRiskScoringJob implements ShouldQueue
         $this->schoolYear = $schoolYear;
     }
 
-    /**
-     * Execute the job.
-     */
     public function handle(RiskScoringService $riskService): void
     {
         $result = $riskService->processBlock(
@@ -41,7 +36,6 @@ class ProcessRiskScoringJob implements ShouldQueue
             $this->schoolYear
         );
 
-        // Store result for later retrieval
         \Illuminate\Support\Facades\Cache::put(
             'risk_scoring_' . $this->blockId . '_' . $this->gradingPeriod,
             $result,
@@ -49,13 +43,20 @@ class ProcessRiskScoringJob implements ShouldQueue
         );
     }
 
-    /**
-     * Get the job result.
-     */
     public function getResult(): ?array
     {
         return \Illuminate\Support\Facades\Cache::get(
             'risk_scoring_' . $this->blockId . '_' . $this->gradingPeriod
         );
+    }
+
+    public function failed(\Throwable $exception): void
+    {
+        Log::error('ProcessRiskScoringJob failed — AI scoring not completed', [
+            'block_id' => $this->blockId,
+            'grading_period' => $this->gradingPeriod,
+            'school_year' => $this->schoolYear,
+            'error' => $exception->getMessage(),
+        ]);
     }
 }

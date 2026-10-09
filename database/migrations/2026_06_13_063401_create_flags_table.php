@@ -11,7 +11,7 @@ return new class extends Migration
         Schema::create('flags', function (Blueprint $table) {
             $table->id();
             $table->foreignId('student_id')->constrained()->onDelete('cascade');
-            $table->enum('grading_period', ['Prelim', 'Midterm', 'Semifinal', 'Finals']);
+            $table->enum('grading_period', ['Prelim', 'Midterm', 'Finals']);
             $table->string('school_year', 9);
             $table->enum('semester', ['1st', '2nd']);
             $table->enum('flag_type', ['high_risk', 'consecutive_high_risk', 'low_attendance', 'failing_grade', 'attendance_warning', 'attendance_drop']);

@@ -22,14 +22,63 @@
 @endsection
 
 @section('content')
-<div class="row">
-    <div class="col-12 mb-4">
-        <div class="card">
-            <div class="card-header bg-primary text-white">
-                <i class="fas fa-book me-2"></i> 
-                Your Grades - {{ $currentPeriod }} {{ $schoolYear }}
-                <span class="badge bg-light text-primary ms-2">{{ $studentInfo->program_code }} - {{ $studentInfo->year_level }}</span>
+@php
+    // Roll the roster up once, here, so the hero and the four metrics capsules
+    // all read from the same figures rather than each re-deriving them.
+    $gradeCount = $subjectGrades->count();
+    $average    = $gradeCount > 0 ? round($subjectGrades->avg('numerical_grade'), 1) : null;
+    $failing    = $subjectGrades->where('numerical_grade', '<', 75)->count();
+    $atRisk     = $subjectGrades->where('numerical_grade', '>=', 75)->where('numerical_grade', '<', 80)->count();
+    $passing    = max($gradeCount - $failing - $atRisk, 0);
+
+    $averageTone = $average === null
+        ? 'text-muted'
+        : ($average < 75 ? 'text-danger' : ($average < 80 ? 'text-warning' : 'text-success'));
+@endphp
+
+<div class="ah-page sp-page" style="--ah-photo: url('{{ asset('images/backgrounds/bg_smll_udd.jpg') }}')">
+
+    <div class="sp-welcome ah-reveal" style="--ah-i: 0;">
+        <span class="sp-welcome-icon"><i class="fas fa-book"></i></span>
+        <div class="flex-grow-1">
+            <h2 class="sp-welcome-title">
+                {{ $average === null ? 'No grades recorded yet' : $average . '% average' }}
+            </h2>
+            <p class="sp-welcome-sub">
+                {{ $gradeCount }} subject(s) in <strong>{{ $currentPeriod }} {{ $schoolYear }}</strong>
+                &middot; {{ $studentInfo->program_code }} — {{ $studentInfo->year_level }}
+            </p>
+        </div>
+    </div>
+
+    <div class="row ah-reveal sp-metrics text-center mb-4" style="--ah-i: 1;">
+        <div class="col-6 col-lg-3">
+            <div class="text-muted small text-uppercase">Average</div>
+            <div class="fw-bold fs-4 {{ $averageTone }}">
+                {{ $average === null ? '—' : $average . '%' }}
             </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="text-muted small text-uppercase">Passing</div>
+            <div class="fw-bold fs-4 {{ $passing > 0 ? 'text-success' : 'text-muted' }}">{{ $passing }}</div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="text-muted small text-uppercase">At Risk</div>
+            <div class="fw-bold fs-4 {{ $atRisk > 0 ? 'text-warning' : 'text-muted' }}">{{ $atRisk }}</div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="text-muted small text-uppercase">Failing</div>
+            <div class="fw-bold fs-4 {{ $failing > 0 ? 'text-danger' : 'text-success' }}">{{ $failing }}</div>
+        </div>
+    </div>
+
+    <div class="row ah-reveal" style="--ah-i: 2;">
+        <div class="col-12 mb-4">
+            <div class="card ah-glow">
+                <div class="card-header">
+                    <i class="fas fa-list-ol text-primary"></i> Subject Grades
+                    <span class="badge bg-light text-primary ms-2">{{ $currentPeriod }} {{ $schoolYear }}</span>
+                </div>
             <div class="card-body">
                 @if($subjectGrades->count() > 0)
                     <div class="table-responsive">
@@ -102,12 +151,15 @@
                 @else
                     <div class="text-center text-muted py-4">
                         <i class="fas fa-book fa-3x d-block mb-3"></i>
-                        <p>No grades available for this period.</p>
+                        <p class="mb-1">No grades available for this period.</p>
+                        <small>Grades are posted by your instructor once a grading period closes.</small>
                     </div>
                 @endif
             </div>
         </div>
     </div>
+</div>
+
 </div>
 @endsection
 

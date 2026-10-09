@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Student;
 
 use App\Http\Controllers\Controller;
+use App\Repositories\Api\StudentRepository;
 use App\Services\InterventionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -17,13 +18,12 @@ class RecommendationController extends Controller
         $this->interventionService = $interventionService;
     }
 
-    /**
-     * Get recommendations for the logged-in student.
-     */
-    public function index()
+    public function index(StudentRepository $students)
     {
         $user = Auth::user();
-        $student = DB::table('students')->where('email', $user->email)->first();
+
+        // Student records come from the mock API.
+        $student = $students->findByEmail($user->email);
 
         if (!$student) {
             return redirect()->route('dashboard')->with('error', 'Student record not found.');
@@ -32,7 +32,6 @@ class RecommendationController extends Controller
         $recommendations = $this->interventionService->getStudentRecommendations($student->id);
         $tracking = $this->interventionService->getTrackingStatus($student->id);
 
-        // Merge tracking status with recommendations
         $trackedIds = collect($tracking)->pluck('recommendation_id')->toArray();
         $completedIds = collect($tracking)->where('is_completed', true)->pluck('recommendation_id')->toArray();
 
@@ -48,17 +47,16 @@ class RecommendationController extends Controller
         ]);
     }
 
-    /**
-     * Mark a recommendation as completed.
-     */
-    public function markCompleted(Request $request)
+    public function markCompleted(Request $request, StudentRepository $students)
     {
         $request->validate([
             'recommendation_id' => 'required|integer|exists:intervention_recommendations,id',
         ]);
 
         $user = Auth::user();
-        $student = DB::table('students')->where('email', $user->email)->first();
+
+        // Student records come from the mock API; recommendations stay local.
+        $student = $students->findByEmail($user->email);
 
         if (!$student) {
             return response()->json([
@@ -67,7 +65,6 @@ class RecommendationController extends Controller
             ], 404);
         }
 
-        // Verify recommendation belongs to this student
         $rec = DB::table('intervention_recommendations')
             ->where('id', $request->recommendation_id)
             ->where('student_id', $student->id)
@@ -85,13 +82,12 @@ class RecommendationController extends Controller
         return response()->json($result);
     }
 
-    /**
-     * Get the number of pending recommendations.
-     */
-    public function getPendingCount()
+    public function getPendingCount(StudentRepository $students)
     {
         $user = Auth::user();
-        $student = DB::table('students')->where('email', $user->email)->first();
+
+        // Student records come from the mock API.
+        $student = $students->findByEmail($user->email);
 
         if (!$student) {
             return response()->json(['count' => 0]);

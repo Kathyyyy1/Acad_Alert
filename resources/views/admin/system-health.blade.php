@@ -15,11 +15,12 @@
 @endsection
 
 @section('content')
-<!-- Health Status Cards -->
+<div class="ah-page admin-page" style="--ah-photo: url('{{ asset('images/backgrounds/maincampus03.webp') }}')">
+
 <div class="row">
     @foreach($health as $key => $item)
     <div class="col-md-2 col-6 mb-3">
-        <div class="card h-100">
+        <div class="card h-100 ah-reveal" style="--ah-i: {{ $loop->index }};">
             <div class="card-body text-center">
                 <div class="display-4 mb-2">
                     <i class="fas 
@@ -39,10 +40,9 @@
     @endforeach
 </div>
 
-<!-- Recent Errors -->
 <div class="row">
     <div class="col-12 mb-4">
-        <div class="card border-danger">
+        <div class="card border-danger ah-glow ah-reveal" style="--ah-i: 6;">
             <div class="card-header bg-danger text-white">
                 <i class="fas fa-exclamation-circle me-2"></i> Recent Errors
                 <span class="badge bg-light text-danger ms-2">{{ count($errors) }}</span>
@@ -70,10 +70,9 @@
     </div>
 </div>
 
-<!-- System Info -->
 <div class="row">
     <div class="col-12 mb-4">
-        <div class="card">
+        <div class="card ah-glow ah-reveal" style="--ah-i: 7;">
             <div class="card-header bg-secondary text-white">
                 <i class="fas fa-info-circle me-2"></i> System Information
             </div>
@@ -107,6 +106,8 @@
             </div>
         </div>
     </div>
+</div>
+
 </div>
 @endsection
 

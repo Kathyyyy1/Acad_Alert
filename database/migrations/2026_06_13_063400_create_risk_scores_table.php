@@ -11,20 +11,19 @@ return new class extends Migration
         Schema::create('risk_scores', function (Blueprint $table) {
             $table->id();
             $table->foreignId('student_id')->constrained()->onDelete('cascade');
-            $table->enum('grading_period', ['Prelim', 'Midterm', 'Semifinal', 'Finals']);
+            $table->enum('grading_period', ['Prelim', 'Midterm', 'Finals']);
             $table->string('school_year', 9);
             $table->enum('semester', ['1st', '2nd']);
             $table->integer('risk_score');
             $table->enum('risk_level', ['Low', 'Moderate', 'High']);
             $table->json('risk_factors')->nullable();
-            $table->enum('scoring_method', ['ai', 'fallback'])->default('ai');
+            $table->enum('scoring_method', ['ai'])->default('ai');
             $table->text('ai_response_raw')->nullable();
             $table->integer('api_attempt_count')->default(0);
             $table->text('last_api_error')->nullable();
             $table->enum('processing_status', ['pending', 'processing', 'completed', 'failed'])->default('pending');
             $table->timestamps();
             
-            // Indexes for performance (6,400 records)
             $table->index('student_id');
             $table->index('grading_period');
             $table->index('risk_level');

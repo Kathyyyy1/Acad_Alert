@@ -14,15 +14,13 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
-        // Register middleware aliases
         $middleware->alias([
             'role' => RoleMiddleware::class,
             'department.isolation' => DepartmentIsolationMiddleware::class,
         ]);
         
         // REMOVED: $middleware->append(DepartmentIsolationMiddleware::class);
-        // Department isolation is now applied ONLY to Master Teacher routes in web.php
+        // Department isolation is now applied ONLY to Academic Head routes in web.php
     })
     ->withExceptions(function (Exceptions $exceptions) {
-        //
     })->create();

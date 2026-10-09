@@ -8,17 +8,15 @@
         <button class="btn btn-sm btn-outline-primary" onclick="window.location.reload()">
             <i class="fas fa-sync me-1"></i> Refresh
         </button>
-        <button class="btn btn-sm btn-secondary" onclick="window.print()">
-            <i class="fas fa-print me-1"></i> Print
-        </button>
     </div>
 @endsection
 
 @section('content')
-<!-- Quick Stats Cards -->
+<div class="ah-page admin-page" style="--ah-photo: url('{{ asset('images/backgrounds/maincampus02.webp') }}')">
+
 <div class="row">
     <div class="col-xl-3 col-md-6 mb-4">
-        <div class="stat-card primary">
+        <div class="stat-card primary ah-reveal" style="--ah-i: 0;">
             <div class="d-flex justify-content-between align-items-center">
                 <div>
                     <div class="stat-label">Total Students</div>
@@ -32,7 +30,7 @@
     </div>
     
     <div class="col-xl-3 col-md-6 mb-4">
-        <div class="stat-card danger">
+        <div class="stat-card danger ah-reveal" style="--ah-i: 1;">
             <div class="d-flex justify-content-between align-items-center">
                 <div>
                     <div class="stat-label">High Risk Students</div>
@@ -46,7 +44,7 @@
     </div>
     
     <div class="col-xl-3 col-md-6 mb-4">
-        <div class="stat-card purple">
+        <div class="stat-card purple ah-reveal" style="--ah-i: 2;">
             <div class="d-flex justify-content-between align-items-center">
                 <div>
                     <div class="stat-label">Critical Cases</div>
@@ -60,7 +58,7 @@
     </div>
     
     <div class="col-xl-3 col-md-6 mb-4">
-        <div class="stat-card success">
+        <div class="stat-card success ah-reveal" style="--ah-i: 3;">
             <div class="d-flex justify-content-between align-items-center">
                 <div>
                     <div class="stat-label">Collection Rate</div>
@@ -81,10 +79,9 @@
     </div>
 </div>
 
-<!-- Charts Row -->
 <div class="row">
     <div class="col-xl-8 col-lg-7 mb-4">
-        <div class="card">
+        <div class="card ah-glow ah-reveal" style="--ah-i: 4;">
             <div class="card-header">
                 <i class="fas fa-chart-bar text-primary"></i>
                 Risk by Department
@@ -98,7 +95,7 @@
     </div>
     
     <div class="col-xl-4 col-lg-5 mb-4">
-        <div class="card">
+        <div class="card ah-glow ah-reveal" style="--ah-i: 5;">
             <div class="card-header">
                 <i class="fas fa-chart-pie text-primary"></i>
                 Risk Distribution
@@ -117,16 +114,16 @@
     </div>
 </div>
 
-<!-- Risk Trend Row -->
 <div class="row">
     <div class="col-12 mb-4">
-        <div class="card">
+        <div class="card ah-glow ah-reveal" style="--ah-i: 6;">
             <div class="card-header">
                 <i class="fas fa-chart-line text-primary"></i>
                 Institution Risk Trend
+                <span class="admin-trend-tag">High-Risk Share</span>
             </div>
             <div class="card-body">
-                <div class="chart-container" style="height: 200px;">
+                <div class="chart-container admin-trend-stage">
                     <canvas id="riskTrendChart"></canvas>
                 </div>
             </div>
@@ -134,10 +131,9 @@
     </div>
 </div>
 
-<!-- Recent Activities -->
 <div class="row">
     <div class="col-12 mb-4">
-        <div class="card">
+        <div class="card ah-glow ah-reveal" style="--ah-i: 7;">
             <div class="card-header">
                 <i class="fas fa-history text-primary"></i>
                 Recent Activities
@@ -172,10 +168,9 @@
     </div>
 </div>
 
-<!-- System Health -->
 <div class="row">
     <div class="col-12 mb-4">
-        <div class="card">
+        <div class="card ah-glow ah-reveal" style="--ah-i: 8;">
             <div class="card-header">
                 <i class="fas fa-server text-primary"></i>
                 System Health
@@ -197,58 +192,13 @@
     </div>
 </div>
 
-<!-- Quick Actions -->
-<div class="row">
-    <div class="col-12 mb-4">
-        <div class="card">
-            <div class="card-header bg-primary text-white">
-                <i class="fas fa-bolt me-2"></i> Quick Actions
-            </div>
-            <div class="card-body">
-                <div class="d-flex flex-wrap gap-2">
-                    <a href="{{ route('admin.users.index') }}" class="btn btn-sm btn-primary">
-                        <i class="fas fa-users me-1"></i> Manage Users
-                    </a>
-                    <a href="{{ route('admin.academic.index') }}" class="btn btn-sm btn-success">
-                        <i class="fas fa-building me-1"></i> Academic Structure
-                    </a>
-                    <a href="{{ route('admin.risk.config') }}" class="btn btn-sm btn-warning">
-                        <i class="fas fa-sliders-h me-1"></i> Risk Settings
-                    </a>
-                    <a href="{{ route('admin.payments.index') }}" class="btn btn-sm btn-info">
-                        <i class="fas fa-credit-card me-1"></i> Payment Reports
-                    </a>
-                    <a href="{{ route('admin.audit.logs') }}" class="btn btn-sm btn-secondary">
-                        <i class="fas fa-history me-1"></i> Audit Logs
-                    </a>
-                    <a href="{{ route('admin.schoolyear.index') }}" class="btn btn-sm btn-dark">
-                        <i class="fas fa-calendar-alt me-1"></i> School Year
-                    </a>
-                    <a href="{{ route('admin.system.health') }}" class="btn btn-sm btn-outline-primary">
-                        <i class="fas fa-server me-1"></i> System Health
-                    </a>
-                </div>
-            </div>
-        </div>
-    </div>
 </div>
 @endsection
 
 @push('scripts')
-<!-- ======================================== -->
-<!-- CHART.JS SCRIPTS - Step 17 & 18           -->
-<!-- ======================================== -->
-<!-- 
-    NOTE: All chart initialization is now handled by admin-charts.js
-    The inline chart code has been removed to prevent duplicate initialization.
--->
 <script src="{{ asset('js/charts/chart-config.js') }}"></script>
 <script src="{{ asset('js/charts/admin-charts.js') }}"></script>
 
-<!-- 
-    Debugging: Check if charts are loading correctly
-    Open browser console to see logs from chart-config.js and admin-charts.js
--->
 <script>
     console.log('[Admin Dashboard] Chart scripts loaded.');
     console.log('[Admin Dashboard] Charts will be initialized by admin-charts.js');

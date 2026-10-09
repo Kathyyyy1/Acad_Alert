@@ -17,7 +17,6 @@ class FlagsTableSeeder extends Seeder
         $flagCount = 0;
         
         foreach ($riskScores as $risk) {
-            // Check if consecutive high risk
             $prevRisk = DB::table('risk_scores')
                 ->where('student_id', $risk->student_id)
                 ->where('grading_period', $this->getPreviousPeriod($risk->grading_period))
@@ -46,7 +45,7 @@ class FlagsTableSeeder extends Seeder
     
     private function getPreviousPeriod(string $current): string
     {
-        $periods = ['Prelim', 'Midterm', 'Semifinal', 'Finals'];
+        $periods = ['Prelim', 'Midterm', 'Finals'];
         $index = array_search($current, $periods);
         return $index > 0 ? $periods[$index - 1] : '';
     }

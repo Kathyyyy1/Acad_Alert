@@ -15,7 +15,7 @@ return new class extends Migration
             $table->foreignId('case_id')->nullable()->constrained()->onDelete('set null');
             $table->string('school_year', 9);
             $table->enum('semester', ['1st', '2nd']);
-            $table->enum('grading_period', ['Prelim', 'Midterm', 'Semifinal', 'Finals']);
+            $table->enum('grading_period', ['Prelim', 'Midterm', 'Finals']);
             $table->text('notes')->nullable();
             $table->timestamp('escalated_at');
             $table->timestamps();

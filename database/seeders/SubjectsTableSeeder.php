@@ -21,11 +21,9 @@ class SubjectsTableSeeder extends Seeder
             return;
         }
         
-        // Read CSV with proper handling
         $file = fopen($csvFile, 'r');
         $header = fgetcsv($file);
         
-        // Clean header - remove BOM if present and trim
         $header = array_map(function($item) {
             return trim(str_replace("\xEF\xBB\xBF", '', $item));
         }, $header);
@@ -35,7 +33,6 @@ class SubjectsTableSeeder extends Seeder
         $errorCount = 0;
         
         while (($row = fgetcsv($file)) !== false) {
-            // Skip empty rows
             if (empty(array_filter($row))) {
                 continue;
             }
@@ -43,7 +40,6 @@ class SubjectsTableSeeder extends Seeder
             // Fix: Ensure row has same number of columns as header
             $row = array_pad($row, count($header), '');
             
-            // Truncate row if it has more columns than header
             if (count($row) > count($header)) {
                 $row = array_slice($row, 0, count($header));
             }
@@ -56,13 +52,11 @@ class SubjectsTableSeeder extends Seeder
                 continue;
             }
             
-            // Skip if required fields are empty
             if (empty($data['program_code']) || empty($data['subject_code']) || empty($data['subject_name'])) {
                 $skippedCount++;
                 continue;
             }
             
-            // Get program_id from program code
             $program = DB::table('programs')->where('code', $data['program_code'])->first();
             if (!$program) {
                 $this->command->warn("Program not found: {$data['program_code']} - skipping subject: {$data['subject_name']}");

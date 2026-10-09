@@ -1,15 +1,9 @@
-// ========================================
-// ACADALERT - Counselor Charts (Enhanced)
-// Step 18: Full Frontend Integration
-// ========================================
 
 console.log('[Counselor Charts] Loading...');
 
-// Prevent multiple initializations
 let counselorChartsLoaded = false;
 
 function loadCounselorCharts() {
-    // Prevent duplicate loading
     if (counselorChartsLoaded) {
         console.log('[Counselor Charts] Already loaded, skipping...');
         return;
@@ -43,7 +37,6 @@ function loadPriorityDistribution() {
     }
 
     console.log('[Counselor Charts] Fetching priority distribution data...');
-    // FIXED: Changed from /api/charts/counselor/ to /charts/counselor/
     const url = '/charts/counselor/priority-distribution';
 
     fetchChartData(url)
@@ -70,13 +63,15 @@ function loadPriorityDistribution() {
                 data: data,
                 options: {
                     responsive: true,
-                    maintainAspectRatio: true,
+                    /* CHANGED: Keep the doughnut proportional within its responsive stage. */
+                    maintainAspectRatio: false,
                     plugins: {
                         legend: {
                             position: 'bottom',
                             labels: {
                                 usePointStyle: true,
-                                padding: 15,
+                                pointStyle: 'circle',
+                                padding: 14,
                             }
                         },
                         tooltip: {
@@ -113,7 +108,6 @@ function loadStatusDistribution() {
     }
 
     console.log('[Counselor Charts] Fetching status distribution data...');
-    // FIXED: Changed from /api/charts/counselor/ to /charts/counselor/
     const url = '/charts/counselor/status-distribution';
 
     fetchChartData(url)
@@ -140,7 +134,8 @@ function loadStatusDistribution() {
                 data: data,
                 options: {
                     responsive: true,
-                    maintainAspectRatio: true,
+                    /* CHANGED: Fit the chart to the shared responsive stage. */
+                    maintainAspectRatio: false,
                     plugins: {
                         legend: {
                             display: false
@@ -156,7 +151,7 @@ function loadStatusDistribution() {
                     scales: {
                         y: {
                             beginAtZero: true,
-                            grid: { color: 'rgba(0,0,0,0.05)' }
+                            grid: { color: chartGridColor }
                         },
                         x: {
                             grid: { display: false }
@@ -185,7 +180,6 @@ function loadCaseloadTrend() {
     }
 
     console.log('[Counselor Charts] Fetching caseload trend data...');
-    // FIXED: Changed from /api/charts/counselor/ to /charts/counselor/
     const url = '/charts/counselor/caseload-trend';
 
     fetchChartData(url)
@@ -207,12 +201,20 @@ function loadCaseloadTrend() {
                 return;
             }
 
+            /* CHANGED: Use the OCEAN accent for caseload trend series. */
+            data.datasets.forEach(dataset => {
+                dataset.borderColor = window.COLORS.accent;
+                dataset.backgroundColor = 'rgba(41, 173, 178, 0.12)';
+                dataset.pointBackgroundColor = window.COLORS.accent;
+            });
+
             const config = {
                 type: 'line',
                 data: data,
                 options: {
                     responsive: true,
-                    maintainAspectRatio: true,
+                    /* CHANGED: Fit the chart to the shared responsive stage. */
+                    maintainAspectRatio: false,
                     plugins: {
                         legend: {
                             display: false
@@ -228,7 +230,7 @@ function loadCaseloadTrend() {
                     scales: {
                         y: {
                             beginAtZero: true,
-                            grid: { color: 'rgba(0,0,0,0.05)' },
+                            grid: { color: chartGridColor },
                             title: {
                                 display: true,
                                 text: 'New Cases'
@@ -237,8 +239,8 @@ function loadCaseloadTrend() {
                         x: {
                             grid: { display: false },
                             ticks: {
-                                maxTicksLimit: 15,
-                                maxRotation: 45,
+                                maxTicksLimit: 8,
+                                maxRotation: 0,
                                 minRotation: 0,
                             }
                         }
@@ -258,9 +260,6 @@ function loadCaseloadTrend() {
         });
 }
 
-// ========================================
-// Student Risk Trend (Case View)
-// ========================================
 
 function loadStudentRiskTrend() {
     const canvas = document.getElementById('studentRiskTrendChart');
@@ -271,7 +270,6 @@ function loadStudentRiskTrend() {
 
     console.log('[Counselor Charts] Loading student risk trend...');
     
-    // Get student ID from the page
     const studentId = document.querySelector('meta[name="student-id"]')?.content || 
                       window.studentId || 
                       document.getElementById('studentRiskTrendChart')?.dataset?.studentId ||
@@ -283,7 +281,6 @@ function loadStudentRiskTrend() {
         return;
     }
 
-    // FIXED: Changed from /api/charts/counselor/ to /charts/counselor/
     const url = `/charts/counselor/student-risk/${studentId}`;
 
     fetchChartData(url)
@@ -305,12 +302,20 @@ function loadStudentRiskTrend() {
                 return;
             }
 
+            /* CHANGED: Risk-score trends use OCEAN teal; risk-level badges retain their semantic colors. */
+            data.datasets.forEach(dataset => {
+                dataset.borderColor = window.COLORS.accent;
+                dataset.backgroundColor = 'rgba(41, 173, 178, 0.12)';
+                dataset.pointBackgroundColor = window.COLORS.accent;
+            });
+
             const config = {
                 type: 'line',
                 data: data,
                 options: {
                     responsive: true,
-                    maintainAspectRatio: true,
+                    /* CHANGED: Fit the chart to the shared responsive stage. */
+                    maintainAspectRatio: false,
                     plugins: {
                         legend: {
                             display: false
@@ -327,7 +332,7 @@ function loadStudentRiskTrend() {
                         y: {
                             min: 0,
                             max: 100,
-                            grid: { color: 'rgba(0,0,0,0.05)' },
+                            grid: { color: chartGridColor },
                             ticks: {
                                 stepSize: 20
                             }
@@ -363,7 +368,6 @@ function showFallbackMessage(canvas, message) {
     }
 }
 
-// Load counselor charts when DOM is ready - using a more reliable approach
 if (document.readyState === 'complete' || document.readyState === 'interactive') {
     setTimeout(() => {
         if (document.querySelector('#priorityChart, #statusChart, #caseloadTrendChart')) {

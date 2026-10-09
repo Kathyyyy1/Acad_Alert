@@ -2,18 +2,22 @@
 
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\DB;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Admin\DashboardController as AdminDashboardController;
-use App\Http\Controllers\MasterTeacher\DashboardController as TeacherDashboardController;
+use App\Http\Controllers\AcademicHead\DashboardController as AcademicHeadDashboardController;
 use App\Http\Controllers\Counselor\DashboardController as CounselorDashboardController;
 use App\Http\Controllers\Student\DashboardController as StudentDashboardController;
-use App\Http\Controllers\MasterTeacher\RiskScoringController;
-use App\Http\Controllers\MasterTeacher\EscalationController;
-use App\Http\Controllers\MasterTeacher\InterventionController;
+use App\Http\Controllers\AcademicHead\RiskScoringController;
+use App\Http\Controllers\AcademicHead\EscalationController;
+use App\Http\Controllers\AcademicHead\InterventionController;
+use App\Http\Controllers\AcademicHead\ReportController as AcademicHeadReportController;
+use App\Http\Controllers\Admin\EndOfTermReportController as AdminReportController;
+use App\Http\Controllers\Counselor\ReportController as CounselorReportController;
 use App\Http\Controllers\Student\RecommendationController;
+use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\Api\AdminChartController;
-use App\Http\Controllers\Api\TeacherChartController;
+use App\Http\Controllers\Api\AcademicHeadChartController;
 use App\Http\Controllers\Api\CounselorChartController;
 use App\Http\Controllers\Api\StudentChartController;
 
@@ -37,28 +41,37 @@ Route::middleware(['guest'])->group(function () {
 Route::post('/logout', [LoginController::class, 'logout'])->name('logout');
 
 // ========================================
-// Helper Routes for Master Teacher
+// Helper Routes for Academic Head
 // ========================================
 
-Route::middleware(['auth', 'role:master_teacher'])->group(function () {
+Route::middleware(['auth', 'role:academic_head'])->group(function () {
     // Get student count for a block
-    Route::get('/teacher/block/{blockId}/student-count', function ($blockId) {
-        $count = DB::table('students')->where('block_id', $blockId)->where('status', 'Active')->count();
+    Route::get('/academic-head/block/{blockId}/student-count', function ($blockId) {
+        // students is served by the mock API now.
+        $count = app(\App\Repositories\Api\StudentRepository::class)->activeCountForBlock((int) $blockId);
         return response()->json(['count' => $count]);
-    })->name('teacher.block.studentCount');
+    })->name('academic-head.block.studentCount');
     
     // Get students for a block (used in intervention modal for student selection)
-    Route::get('/teacher/block/{blockId}/students', function ($blockId) {
-        $students = DB::table('students')
-            ->where('block_id', $blockId)
+    Route::get('/academic-head/block/{blockId}/students', function ($blockId) {
+        // students is served by the mock API now. The previous query had no ORDER BY,
+        // so both it and this version return the rows in id order.
+        $students = app(\App\Repositories\Api\StudentRepository::class)->all()
+            ->where('block_id', (int) $blockId)
             ->where('status', 'Active')
-            ->select('id', 'first_name', 'last_name', 'student_number')
-            ->get();
+            ->map(fn ($row) => (object) [
+                'id' => (int) $row->id,
+                'first_name' => $row->first_name,
+                'last_name' => $row->last_name,
+                'student_number' => $row->student_number,
+            ])
+            ->values();
+
         return response()->json([
             'success' => true,
             'students' => $students,
         ]);
-    })->name('teacher.block.students');
+    })->name('academic-head.block.students');
 });
 
 // ========================================
@@ -71,8 +84,8 @@ Route::middleware(['auth'])->group(function () {
         
         if ($user->role === 'admin') {
             return redirect()->route('admin.dashboard');
-        } elseif ($user->role === 'master_teacher') {
-            return redirect()->route('teacher.department');
+        } elseif ($user->role === 'academic_head') {
+            return redirect()->route('academic-head.department');
         } elseif ($user->role === 'guidance_counselor') {
             return redirect()->route('counselor.dashboard');
         } elseif ($user->role === 'student') {
@@ -93,11 +106,14 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/risk-trend', [AdminChartController::class, 'riskTrend']);
     });
     
-    // ======== MASTER TEACHER CHARTS ========
-    Route::prefix('charts/teacher')->middleware(['auth', 'role:master_teacher'])->group(function () {
-        Route::get('/department-risk', [TeacherChartController::class, 'riskByProgram']);
-        Route::get('/department-trend', [TeacherChartController::class, 'departmentRiskTrend']);
-        Route::get('/block-risk/{blockId}', [TeacherChartController::class, 'blockRiskDistribution']);
+    // ======== ACADEMIC HEAD CHARTS ========
+    Route::prefix('charts/academic-head')->middleware(['auth', 'role:academic_head'])->group(function () {
+        Route::get('/department-risk', [AcademicHeadChartController::class, 'riskByProgram']);
+        Route::get('/department-trend', [AcademicHeadChartController::class, 'departmentRiskTrend']);
+        Route::get('/block-risk/{blockId}', [AcademicHeadChartController::class, 'blockRiskDistribution']);
+        // Department-wide breakdowns added for the reorganized dashboard.
+        Route::get('/risk-by-block', [AcademicHeadChartController::class, 'riskByBlock']);
+        Route::get('/escalation-trend', [AcademicHeadChartController::class, 'escalationTrend']);
     });
     
     // ======== COUNSELOR CHARTS ========
@@ -188,6 +204,10 @@ Route::middleware(['auth'])->group(function () {
         
         // Audit Logs
         Route::get('/audit/logs', [AdminDashboardController::class, 'auditLogs'])->name('audit.logs');
+        // The same list as a CSV download. The two paths differ, so neither can
+        // shadow the other. The export is fed the SAME request input as the page,
+        // which is what makes the file match the table on screen.
+        Route::get('/audit/logs/export', [AdminDashboardController::class, 'exportAuditLogs'])->name('audit.logs.export');
         
         // School Year
         Route::get('/schoolyear', [AdminDashboardController::class, 'schoolYear'])->name('schoolyear.index');
@@ -197,13 +217,41 @@ Route::middleware(['auth'])->group(function () {
         
         // System Health
         Route::get('/system/health', [AdminDashboardController::class, 'systemHealth'])->name('system.health');
+
+        // ============================================
+        // END-OF-TERM REPORTS (read-only consumer)
+        // Consolidated view of every report shared with the administrator role.
+        // ============================================
+        Route::get('/reports', [AdminReportController::class, 'index'])->name('reports');
+        Route::get('/reports/{reportId}', [AdminReportController::class, 'preview'])->whereNumber('reportId')->name('reports.preview');
+        Route::get('/reports/{reportId}/pdf', [AdminReportController::class, 'download'])->whereNumber('reportId')->name('reports.pdf');
     });
     
-    // ======== MASTER TEACHER ROUTES ========
-    Route::prefix('teacher')->name('teacher.')->middleware(['role:master_teacher', 'department.isolation'])->group(function () {
-        Route::get('/department', [TeacherDashboardController::class, 'department'])->name('department');
-        Route::get('/blocks/{programId}', [TeacherDashboardController::class, 'blocks'])->name('blocks');
-        Route::get('/block/{blockId}', [TeacherDashboardController::class, 'block'])->name('block');
+    // ======== ACADEMIC HEAD ROUTES ========
+    Route::prefix('academic-head')->name('academic-head.')->middleware(['role:academic_head', 'department.isolation'])->group(function () {
+        Route::get('/department', [AcademicHeadDashboardController::class, 'department'])->name('department');
+        // Department-wide block index. Declared BEFORE the {programId} form so the
+        // bare path is matched by the literal route (the parameterized one cannot
+        // match a path with no trailing segment, but the ordering makes that
+        // explicit rather than incidental).
+        Route::get('/blocks', [AcademicHeadDashboardController::class, 'blocksIndex'])->name('blocks.index');
+        Route::get('/blocks/{programId}', [AcademicHeadDashboardController::class, 'blocks'])->name('blocks');
+        Route::get('/block/{blockId}', [AcademicHeadDashboardController::class, 'block'])->name('block');
+
+        // ============================================
+        // RISK SCORING WORKSPACE
+        // --------------------------------------------
+        // Trigger and monitor scoring runs for every block in the department,
+        // with cache/last-run state. Reuses the existing run-scoring,
+        // refresh-scoring and scoring-status endpoints — nothing about the
+        // scoring engine changes.
+        // ============================================
+        Route::get('/risk-scoring', [RiskScoringController::class, 'index'])->name('riskScoring');
+        // Refreshed summary cards + block rows for the workspace, returned as HTML
+        // fragments so a finished scoring run can update the page in place instead of
+        // making the Academic Head reload by hand. Read-only: it re-computes and
+        // re-renders, it never triggers scoring.
+        Route::get('/risk-scoring/data', [RiskScoringController::class, 'data'])->name('riskScoring.data');
         
         // ============================================
         // RECOMMENDATION MANAGEMENT ROUTES (Dedicated Page)
@@ -227,17 +275,36 @@ Route::middleware(['auth'])->group(function () {
         // ESCALATION ROUTES
         // ============================================
         Route::post('/bulk-escalate', [EscalationController::class, 'bulkEscalate'])->name('bulkEscalate');
+        // Read-only preview of the recommendation that would be forwarded, so the
+        // Academic Head can review/edit it inside the escalation modal before sending.
+        Route::post('/escalation/recommendation-preview', [EscalationController::class, 'recommendationPreview'])->name('escalation.recommendationPreview');
         Route::post('/check-escalation-status', [EscalationController::class, 'checkEscalationStatus'])->name('checkEscalationStatus');
         Route::post('/reset-escalation', [EscalationController::class, 'resetEscalation'])->name('resetEscalation');
         Route::post('/bulk-reset-escalation', [EscalationController::class, 'bulkResetEscalation'])->name('bulkResetEscalation');
         Route::post('/can-reset-escalation', [EscalationController::class, 'canResetEscalation'])->name('canResetEscalation');
         Route::get('/block/{blockId}/escalated-students', [EscalationController::class, 'getEscalatedStudentsInBlock'])->name('escalatedStudents');
+
+        // ============================================
+        // END-OF-TERM REPORT ROUTES (Academic Head ONLY)
+        // --------------------------------------------
+        // Deterministic, rule-based generation + PDF export. These routes are
+        // reachable exclusively through this `role:academic_head` group, which is
+        // what makes the Academic Head the sole authorized generator.
+        // ============================================
+        Route::get('/reports', [AcademicHeadReportController::class, 'index'])->name('reports');
+        Route::post('/reports/generate', [AcademicHeadReportController::class, 'generate'])->name('reports.generate');
+        Route::get('/reports/{reportId}', [AcademicHeadReportController::class, 'preview'])->whereNumber('reportId')->name('reports.preview');
+        Route::get('/reports/{reportId}/pdf', [AcademicHeadReportController::class, 'download'])->whereNumber('reportId')->name('reports.pdf');
+        Route::get('/reports/{reportId}/verify', [AcademicHeadReportController::class, 'verify'])->whereNumber('reportId')->name('reports.verify');
+        Route::post('/reports/{reportId}/share', [AcademicHeadReportController::class, 'share'])->whereNumber('reportId')->name('reports.share');
+        Route::delete('/reports/{reportId}', [AcademicHeadReportController::class, 'destroy'])->whereNumber('reportId')->name('reports.destroy');
     });
     
     // ======== COUNSELOR ROUTES ========
     Route::prefix('counselor')->name('counselor.')->middleware(['role:guidance_counselor', 'department.isolation'])->group(function () {
         Route::get('/dashboard', [CounselorDashboardController::class, 'index'])->name('dashboard');
-        Route::get('/cases', [CounselorDashboardController::class, 'index'])->name('cases');
+        // The caseload list. `scope` selects the view: all (default), open, resolved.
+        Route::get('/cases', [CounselorDashboardController::class, 'cases'])->name('cases');
         Route::get('/case/{caseId}', [CounselorDashboardController::class, 'show'])->name('case');
         
         // Session Management
@@ -248,6 +315,28 @@ Route::middleware(['auth'])->group(function () {
         Route::post('/case/{caseId}/reopen', [CounselorDashboardController::class, 'reopen'])->name('reopen');
         Route::post('/case/{caseId}/update-priority', [CounselorDashboardController::class, 'updatePriority'])->name('priority.update');
         Route::post('/case/{caseId}/update-status', [CounselorDashboardController::class, 'updateStatus'])->name('status.update');
+
+        // ============================================
+        // DEPARTMENT END-OF-TERM REPORTS (read-only consumer)
+        // Only reports the Academic Head has shared with the counselor role.
+        // ============================================
+        Route::get('/reports', [CounselorReportController::class, 'index'])->name('reports');
+        Route::get('/reports/{reportId}', [CounselorReportController::class, 'preview'])->whereNumber('reportId')->name('reports.preview');
+        Route::get('/reports/{reportId}/pdf', [CounselorReportController::class, 'download'])->whereNumber('reportId')->name('reports.pdf');
+
+        // ============================================
+        // MY REPORTS — the counselor's OWN caseload activity summary
+        // ============================================
+        // Deliberately a separate, distinctly named pair of routes. This is not
+        // a department end-of-term report: it aggregates the signed-in
+        // counselor's own `cases`/`case_sessions` rows and is available to every
+        // counselor regardless of sharing. Generation and sharing of department
+        // reports stay exclusive to the Academic Head.
+        //
+        // Declared AFTER the {reportId} routes but under a distinct prefix, so the
+        // whereNumber() constraint is never the thing deciding the match.
+        Route::get('/my-reports', [CounselorReportController::class, 'mine'])->name('reports.mine');
+        Route::get('/my-reports/pdf', [CounselorReportController::class, 'minePdf'])->name('reports.mine.pdf');
     });
     
     // ======== STUDENT ROUTES ========
@@ -268,12 +357,14 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/recommendations/pending-count', [RecommendationController::class, 'getPendingCount'])->name('recommendations.pending');
     });
     
-    // ======== PROFILE ROUTES ========
-    Route::get('/profile', function () {
-        return view('profile');
-    })->name('profile');
-    
-    Route::get('/settings', function () {
-        return view('settings');
-    })->name('settings');
+    // ======== PROFILE & SETTINGS ROUTES ========
+    // Both used to be closures returning views that did not exist, so the
+    // top-right dropdown's Profile and Settings links answered HTTP 500 for every
+    // role. They are now real pages; the route NAMES are unchanged, so every
+    // existing `route('profile')` / `route('settings')` link keeps working.
+    Route::get('/profile', [ProfileController::class, 'show'])->name('profile');
+
+    Route::get('/settings', [SettingsController::class, 'show'])->name('settings');
+    Route::put('/settings/profile', [SettingsController::class, 'updateProfile'])->name('settings.profile');
+    Route::put('/settings/password', [SettingsController::class, 'updatePassword'])->name('settings.password');
 });

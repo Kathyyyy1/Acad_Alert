@@ -9,7 +9,8 @@ class Escalation extends Model
 {
     protected $fillable = [
         'student_id', 'escalated_by', 'case_id', 'school_year',
-        'semester', 'grading_period', 'notes', 'escalated_at'
+        'semester', 'grading_period', 'notes', 'escalated_at',
+        'intervention_recommendation_id'
     ];
 
     public function student(): BelongsTo

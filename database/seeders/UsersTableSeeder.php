@@ -14,7 +14,6 @@ class UsersTableSeeder extends Seeder
         Schema::disableForeignKeyConstraints();
         DB::table('users')->truncate();
         
-        // Admin User
         DB::table('users')->insert([
             'name' => 'Admin User',
             'email' => 'admin@udd.edu.ph',
@@ -25,8 +24,7 @@ class UsersTableSeeder extends Seeder
             'updated_at' => now(),
         ]);
         
-        // Master Teachers (5)
-        $masterTeachers = [
+        $academicHeads = [
             ['name' => 'Prof. Juan Santos', 'email' => 'mt.site@udd.edu.ph', 'department_code' => 'SITE'],
             ['name' => 'Prof. Maria Reyes', 'email' => 'mt.sba@udd.edu.ph', 'department_code' => 'SBA'],
             ['name' => 'Prof. Carlo Cruz', 'email' => 'mt.soe@udd.edu.ph', 'department_code' => 'SOE'],
@@ -34,19 +32,18 @@ class UsersTableSeeder extends Seeder
             ['name' => 'Prof. Mark Mendoza', 'email' => 'mt.sihm@udd.edu.ph', 'department_code' => 'SIHM'],
         ];
         
-        foreach ($masterTeachers as $mt) {
+        foreach ($academicHeads as $mt) {
             DB::table('users')->insert([
                 'name' => $mt['name'],
                 'email' => $mt['email'],
                 'password' => Hash::make('password'),
-                'role' => 'master_teacher',
+                'role' => 'academic_head',
                 'is_active' => true,
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
         }
         
-        // Guidance Counselors (5)
         $counselors = [
             ['name' => 'Ms. Rica Flores', 'email' => 'gc.site@udd.edu.ph', 'department_code' => 'SITE'],
             ['name' => 'Ms. Isabel Torres', 'email' => 'gc.sba@udd.edu.ph', 'department_code' => 'SBA'],

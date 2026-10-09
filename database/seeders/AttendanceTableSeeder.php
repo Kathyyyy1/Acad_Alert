@@ -25,19 +25,17 @@ class AttendanceTableSeeder extends Seeder
         
         $students = DB::table('students')->get();
         $subjects = DB::table('subjects')->get();
-        $gradingPeriods = ['Prelim', 'Midterm', 'Semifinal', 'Finals'];
+        $gradingPeriods = ['Prelim', 'Midterm', 'Finals'];
         $sessionsPerPeriod = 15;
         $hoursPerSession = 3;
         
         $attendanceCount = 0;
         $summaryCount = 0;
         
-        // Get admin user for recorded_by
         $admin = DB::table('users')->where('role', 'admin')->first();
         $recordedBy = $admin ? $admin->id : 1;
         
         foreach ($students as $student) {
-            // Get student's subjects
             $block = DB::table('blocks')->where('id', $student->block_id)->first();
             $yearLevel = DB::table('year_levels')->where('id', $block->year_level_id)->first();
             $program = DB::table('programs')->where('id', $yearLevel->program_id)->first();
@@ -50,7 +48,6 @@ class AttendanceTableSeeder extends Seeder
             foreach ($studentSubjects as $subject) {
                 $attendanceRate = $this->generateAttendanceRate();
                 
-                // Calculate summary data
                 $totalRequiredHours = $sessionsPerPeriod * $hoursPerSession;
                 $totalWeightedHours = ($attendanceRate / 100) * $totalRequiredHours;
                 
@@ -59,7 +56,6 @@ class AttendanceTableSeeder extends Seeder
                 $warningIssued = $attendanceRate < 80;
                 $isDropped = $attendanceRate < 60;
                 
-                // Insert summary for each grading period
                 foreach ($gradingPeriods as $period) {
                     DB::table('attendance_summaries')->insert([
                         'student_id' => $student->id,
@@ -81,7 +77,6 @@ class AttendanceTableSeeder extends Seeder
                     $summaryCount++;
                 }
                 
-                // Generate detailed attendance records (sample: 10-15 sessions per period)
                 $sessionsToGenerate = rand(10, 15);
                 for ($s = 1; $s <= $sessionsToGenerate; $s++) {
                     $status = $this->generateAttendanceStatus($attendanceRate);

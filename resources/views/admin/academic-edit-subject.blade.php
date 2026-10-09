@@ -10,9 +10,11 @@
 @endsection
 
 @section('content')
+<div class="ah-page admin-page" style="--ah-photo: url('{{ asset('images/backgrounds/bg_smll_udd.jpg') }}')">
+
 <div class="row">
     <div class="col-lg-8 mx-auto">
-        <div class="card">
+        <div class="card ah-glow ah-reveal" style="--ah-i: 0;">
             <div class="card-header bg-info text-white">
                 <i class="fas fa-edit me-2"></i> Edit Subject            </div>
             <div class="card-body">
@@ -69,5 +71,7 @@
             </div>
         </div>
     </div>
+</div>
+
 </div>
 @endsection

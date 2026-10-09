@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Repositories\Api\GradeRepository;
+use App\Repositories\Api\StudentRepository;
+use App\Repositories\Local\RiskScoreRepository;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -10,13 +13,9 @@ use Illuminate\Support\Facades\Log;
 
 class StudentChartController extends Controller
 {
-    /**
-     * Get student risk trend for line chart.
-     */
-    public function riskTrend(Request $request)
+    public function riskTrend(Request $request, StudentRepository $students, RiskScoreRepository $riskScores)
     {
         try {
-            // Get the authenticated user
             $user = Auth::user();
             
             if (!$user) {
@@ -26,8 +25,8 @@ class StudentChartController extends Controller
                 ], 401);
             }
 
-            // Get student record
-            $student = DB::table('students')->where('email', $user->email)->first();
+            // Student records are served by the mock API now.
+            $student = $students->findByEmail($user->email);
 
             if (!$student) {
                 Log::error('Student record not found for user: ' . $user->email);
@@ -39,12 +38,9 @@ class StudentChartController extends Controller
 
             $schoolYear = $request->input('school_year', '2024-2025');
 
-            $riskHistory = DB::table('risk_scores')
-                ->where('student_id', $student->id)
-                ->where('school_year', $schoolYear)
-                ->orderByRaw("FIELD(grading_period, 'Prelim', 'Midterm', 'Semifinal', 'Finals')")
-                ->select('grading_period', 'risk_score', 'risk_level')
-                ->get();
+            // risk_scores stays local (post-computation aggregate); the FIELD()
+            // ordering is applied in PHP by the repository.
+            $riskHistory = $riskScores->historyForStudent($student->id, $schoolYear);
 
             if ($riskHistory->isEmpty()) {
                 return response()->json([
@@ -102,13 +98,9 @@ class StudentChartController extends Controller
         }
     }
 
-    /**
-     * Get student grades for horizontal bar chart.
-     */
-    public function grades(Request $request)
+    public function grades(Request $request, StudentRepository $students, GradeRepository $gradeRepo)
     {
         try {
-            // Get the authenticated user
             $user = Auth::user();
             
             if (!$user) {
@@ -118,8 +110,8 @@ class StudentChartController extends Controller
                 ], 401);
             }
 
-            // Get student record
-            $student = DB::table('students')->where('email', $user->email)->first();
+            // Student records are served by the mock API now.
+            $student = $students->findByEmail($user->email);
 
             if (!$student) {
                 Log::error('Student record not found for user: ' . $user->email);
@@ -132,17 +124,7 @@ class StudentChartController extends Controller
             $period = $request->input('period', 'Midterm');
             $schoolYear = $request->input('school_year', '2024-2025');
 
-            $grades = DB::table('grades')
-                ->join('subjects', 'grades.subject_id', '=', 'subjects.id')
-                ->where('grades.student_id', $student->id)
-                ->where('grades.grading_period', $period)
-                ->where('grades.school_year', $schoolYear)
-                ->select(
-                    'subjects.subject_name',
-                    'grades.numerical_grade'
-                )
-                ->orderBy('grades.numerical_grade', 'asc')
-                ->get();
+            $grades = $gradeRepo->subjectGradesForStudent($student->id, $period, $schoolYear);
 
             if ($grades->isEmpty()) {
                 return response()->json([
@@ -163,7 +145,6 @@ class StudentChartController extends Controller
             $subjectNames = $grades->pluck('subject_name')->toArray();
             $gradeValues = $grades->pluck('numerical_grade')->toArray();
 
-            // Truncate long subject names for display
             $subjectNames = array_map(function($name) {
                 return strlen($name) > 20 ? substr($name, 0, 20) . '...' : $name;
             }, $subjectNames);

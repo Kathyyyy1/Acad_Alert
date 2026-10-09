@@ -26,7 +26,6 @@ class CaseSessionsTableSeeder extends Seeder
         $sessionCount = 0;
         
         foreach ($cases as $case) {
-            // Add 1-3 sessions per case
             $numSessions = rand(1, 3);
             
             for ($i = 1; $i <= $numSessions; $i++) {

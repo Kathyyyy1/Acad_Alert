@@ -3,16 +3,29 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Repositories\Api\AcademicStructureRepository;
+use App\Repositories\Api\CalendarRepository;
+use App\Repositories\Api\GradeRepository;
+use App\Repositories\Api\PaymentRepository;
+use App\Repositories\Api\StaffRepository;
+use App\Repositories\Api\StudentRepository;
+use App\Repositories\Local\RiskScoreRepository;
+use App\Rules\ApiExists;
+use App\Rules\ApiUnique;
+use App\Services\RiskScoringCacheService;
+use App\Services\RiskThresholdService;
 use Illuminate\Http\Request;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log; 
 
 class DashboardController extends Controller
 {
-    /**
-     * Main Admin Dashboard - System-wide overview.
-     */
+    public function __construct(protected \App\Services\Api\MirrorWriter $mirror)
+    {
+    }
+
     public function index(Request $request)
     {
         $stats = $this->getSystemStats();
@@ -34,9 +47,6 @@ class DashboardController extends Controller
         ]);
     }
 
-    // ============================================
-    // USERS MANAGEMENT
-    // ============================================
 
     public function users(Request $request)
     {
@@ -47,78 +57,138 @@ class DashboardController extends Controller
         $blockFilter = $request->input('block', 'all');
         $searchFilter = $request->input('search', '');
         
-        $query = DB::table('users')
-            ->leftJoin('master_teachers', 'users.id', '=', 'master_teachers.user_id')
-            ->leftJoin('counselors', 'users.id', '=', 'counselors.user_id')
-            ->leftJoin('students', 'users.email', '=', 'students.email')
-            ->leftJoin('blocks', 'students.block_id', '=', 'blocks.id')
-            ->leftJoin('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-            ->leftJoin('programs', 'year_levels.program_id', '=', 'programs.id')
-            ->leftJoin('departments', function($join) {
-                $join->on('programs.department_id', '=', 'departments.id')
-                     ->orOn('master_teachers.department_id', '=', 'departments.id')
-                     ->orOn('counselors.department_id', '=', 'departments.id');
-            })
-            ->select(
-                'users.*',
-                'master_teachers.department_id as mt_department_id',
-                'counselors.department_id as counselor_department_id',
-                'students.student_number',
-                'students.block_id',
-                'departments.id as student_department_id',
-                'departments.code as student_department_code',
-                'departments.name as student_department_name',
-                'programs.id as program_id',
-                'programs.code as program_code',
-                'programs.name as program_name',
-                'year_levels.id as year_level_id',
-                'year_levels.name as year_level_name',
-                'blocks.id as block_id',
-                'blocks.name as block_name'
-            );
+        $structure = app(AcademicStructureRepository::class);
+        $staff = app(StaffRepository::class);
+
+        $departmentIndex = $structure->departments()->keyBy(fn ($row) => (int) $row->id);
+        $programIndex = $structure->programs()->keyBy(fn ($row) => (int) $row->id);
+        $yearLevelIndex = $structure->yearLevels()->keyBy(fn ($row) => (int) $row->id);
+        $blockIndex = $structure->blocks()->keyBy(fn ($row) => (int) $row->id);
+
+        $headsByUser = $staff->academicHeadsByUserId();
+        $counselorsByUser = $staff->counselorsByUserId();
+        $studentsByEmail = app(StudentRepository::class)->keyedByEmail();
+
+        $rows = $staff->users()->map(function ($user) use (
+            $departmentIndex,
+            $programIndex,
+            $yearLevelIndex,
+            $blockIndex,
+            $headsByUser,
+            $counselorsByUser,
+            $studentsByEmail
+        ) {
+            $head = $headsByUser[(int) $user->id] ?? null;
+            $counselor = $counselorsByUser[(int) $user->id] ?? null;
+            $student = $studentsByEmail[(string) $user->email] ?? null;
+
+            $block = ($student !== null && $student->block_id !== null)
+                ? ($blockIndex[(int) $student->block_id] ?? null)
+                : null;
+            $yearLevel = $block !== null ? ($yearLevelIndex[(int) $block->year_level_id] ?? null) : null;
+            $program = $yearLevel !== null ? ($programIndex[(int) $yearLevel->program_id] ?? null) : null;
+
+            $departmentId = $program->department_id
+                ?? $head->department_id
+                ?? $counselor->department_id
+                ?? null;
+            $department = $departmentId !== null ? ($departmentIndex[(int) $departmentId] ?? null) : null;
+
+            $row = clone $user;
+            $row->mt_department_id = $head->department_id ?? null;
+            $row->counselor_department_id = $counselor->department_id ?? null;
+            $row->student_number = $student->student_number ?? null;
+            // `blocks.id as block_id` was selected LAST, so it wins over students.block_id.
+            $row->block_id = $block->id ?? null;
+            $row->student_department_id = $department->id ?? null;
+            $row->student_department_code = $department->code ?? null;
+            $row->student_department_name = $department->name ?? null;
+            $row->program_id = $program->id ?? null;
+            $row->program_code = $program->code ?? null;
+            $row->program_name = $program->name ?? null;
+            $row->year_level_id = $yearLevel->id ?? null;
+            $row->year_level_name = $yearLevel->name ?? null;
+            $row->block_name = $block->name ?? null;
+
+            return $row;
+        });
         
         if ($roleFilter !== 'all') {
-            $query->where('users.role', $roleFilter);
+            $rows = $rows->filter(fn ($row) => (string) $row->role === (string) $roleFilter);
         }
         
         if ($departmentFilter !== 'all') {
-            $query->where(function($q) use ($departmentFilter) {
-                $q->where('programs.department_id', $departmentFilter)
-                  ->orWhere('master_teachers.department_id', $departmentFilter)
-                  ->orWhere('counselors.department_id', $departmentFilter);
+            $target = (int) $departmentFilter;
+
+            $rows = $rows->filter(function ($row) use ($target, $programIndex) {
+                $programDepartment = $row->program_id !== null
+                    ? ($programIndex[(int) $row->program_id]->department_id ?? null)
+                    : null;
+
+                return (int) $programDepartment === $target
+                    || (int) $row->mt_department_id === $target
+                    || (int) $row->counselor_department_id === $target;
             });
         }
         
         if ($programFilter !== 'all') {
-            $query->where('programs.id', $programFilter);
+            $target = (int) $programFilter;
+            $rows = $rows->filter(fn ($row) => (int) $row->program_id === $target);
         }
         
         if ($yearLevelFilter !== 'all') {
-            $query->where('year_levels.id', $yearLevelFilter);
+            $target = (int) $yearLevelFilter;
+            $rows = $rows->filter(fn ($row) => (int) $row->year_level_id === $target);
         }
         
         if ($blockFilter !== 'all') {
-            $query->where('blocks.id', $blockFilter);
+            $target = (int) $blockFilter;
+            $rows = $rows->filter(fn ($row) => (int) $row->block_id === $target);
         }
         
         if (!empty($searchFilter)) {
-            $query->where(function($q) use ($searchFilter) {
-                $q->where('users.name', 'LIKE', "%{$searchFilter}%")
-                  ->orWhere('users.email', 'LIKE', "%{$searchFilter}%")
-                  ->orWhere('students.student_number', 'LIKE', "%{$searchFilter}%");
-            });
+            // MySQL's default collation is case-insensitive, which stripos reproduces
+            // for these ASCII names, emails and student numbers.
+            $rows = $rows->filter(fn ($row) => stripos((string) $row->name, $searchFilter) !== false
+                || stripos((string) $row->email, $searchFilter) !== false
+                || stripos((string) $row->student_number, $searchFilter) !== false);
         }
         
-        $users = $query->orderBy('users.created_at', 'desc')->paginate(20);
-        
-        $departments = DB::table('departments')->get();
-        $programs = DB::table('programs')->get();
-        $yearLevels = DB::table('year_levels')->get();
-        $blocks = DB::table('blocks')->get();
-        $roles = ['admin', 'master_teacher', 'guidance_counselor', 'student'];
+        // ORDER BY users.created_at DESC, with id ASC as the tiebreak InnoDB would
+        // naturally produce for equal timestamps.
+        $rows = $rows->sort(function ($a, $b) {
+            $cmp = strcmp((string) $b->created_at, (string) $a->created_at);
+
+            return $cmp !== 0 ? $cmp : ((int) $a->id <=> (int) $b->id);
+        })->values();
+
+        $perPage = 20;
+        $page = max(1, (int) $request->input('page', 1));
+
+        $users = new LengthAwarePaginator(
+            $rows->forPage($page, $perPage)->values(),
+            $rows->count(),
+            $perPage,
+            $page,
+            ['path' => LengthAwarePaginator::resolveCurrentPath(), 'query' => $request->query()]
+        );
+
+        $departments = $structure->departments();
+        $programs = $structure->programs();
+        $yearLevels = $structure->yearLevels();
+        $blocks = $structure->blocks();
+
+        // The view used to look departments up one row at a time; the map is handed
+        // over instead so no DB access happens inside the Blade template.
+        $departmentCodes = $departments
+            ->mapWithKeys(fn ($row) => [(int) $row->id => $row->code])
+            ->all();
+
+        $roles = ['admin', 'academic_head', 'guidance_counselor', 'student'];
         
         return view('admin.users', compact(
             'users', 'departments', 'programs', 'yearLevels', 'blocks', 'roles',
+            'departmentCodes',
             'roleFilter', 'departmentFilter', 'programFilter', 'yearLevelFilter',
             'blockFilter', 'searchFilter'
         ));
@@ -126,7 +196,7 @@ class DashboardController extends Controller
 
     public function createUser()
     {
-        $departments = DB::table('departments')->get();
+        $departments = app(AcademicStructureRepository::class)->departments();
         return view('admin.users-create', compact('departments'));
     }
 
@@ -135,13 +205,18 @@ class DashboardController extends Controller
         $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|email|unique:users,email',
-            'role' => 'required|in:admin,master_teacher,guidance_counselor,student',
+            'role' => 'required|in:admin,academic_head,guidance_counselor,student',
             'password' => 'required|string|min:6|confirmed',
-            'department_id' => 'nullable|exists:departments,id',
+            'department_id' => ['nullable', new ApiExists('departments', 'id')],
         ]);
 
         try {
             DB::beginTransaction();
+
+            // Dependency data is resolved BEFORE the transaction opens: no network
+            // I/O may happen while a database transaction is held open.
+            $blocks = app(AcademicStructureRepository::class)->blocks();
+            $randomBlock = $blocks->isNotEmpty() ? $blocks->random() : null;
 
             $userId = DB::table('users')->insertGetId([
                 'name' => $request->name,
@@ -153,8 +228,10 @@ class DashboardController extends Controller
                 'updated_at' => now(),
             ]);
 
-            if ($request->role === 'master_teacher' && $request->department_id) {
-                DB::table('master_teachers')->insert([
+            $this->mirror->createdFromLocal('users', $userId);
+
+            if ($request->role === 'academic_head' && $request->department_id) {
+                $headId = DB::table('academic_heads')->insertGetId([
                     'user_id' => $userId,
                     'department_id' => $request->department_id,
                     'employee_number' => 'MT-' . str_pad($userId, 5, '0', STR_PAD_LEFT),
@@ -162,10 +239,12 @@ class DashboardController extends Controller
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);
+
+                $this->mirror->createdFromLocal('academic_heads', $headId);
             }
 
             if ($request->role === 'guidance_counselor' && $request->department_id) {
-                DB::table('counselors')->insert([
+                $counselorId = DB::table('counselors')->insertGetId([
                     'user_id' => $userId,
                     'department_id' => $request->department_id,
                     'employee_number' => 'GC-' . str_pad($userId, 5, '0', STR_PAD_LEFT),
@@ -175,12 +254,13 @@ class DashboardController extends Controller
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);
+
+                $this->mirror->createdFromLocal('counselors', $counselorId);
             }
 
             if ($request->role === 'student') {
-                $block = DB::table('blocks')->inRandomOrder()->first();
-                DB::table('students')->insert([
-                    'block_id' => $block->id ?? 1,
+                $studentId = DB::table('students')->insertGetId([
+                    'block_id' => $randomBlock->id ?? 1,
                     'student_number' => 'UDD-' . date('Y') . '-STU-' . str_pad($userId, 5, '0', STR_PAD_LEFT),
                     'first_name' => explode(' ', $request->name)[0],
                     'last_name' => explode(' ', $request->name)[1] ?? 'Student',
@@ -190,85 +270,121 @@ class DashboardController extends Controller
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);
+
+                $this->mirror->createdFromLocal('students', $studentId);
             }
 
             DB::commit();
+
+            // Network I/O happens only after the transaction has committed.
+            $this->mirror->flush();
+
             $this->logActivity('USER_CREATED', 'Created user: ' . $request->email);
             return redirect()->route('admin.users.index')->with('success', 'User created successfully.');
 
         } catch (\Exception $e) {
             DB::rollBack();
+            // Nothing was committed, so the queued mirrors must not be sent.
+            $this->mirror->discard();
             return back()->with('error', 'Failed to create user: ' . $e->getMessage());
         }
     }
 
     public function getProgramsByDepartment(int $departmentId)
     {
-        $programs = DB::table('programs')
+        // programs are served by the mock API. Filtering in PHP preserves the API's
+        // (id) order, which is what an unordered MySQL SELECT returned.
+        $programs = app(AcademicStructureRepository::class)->programs()
             ->where('department_id', $departmentId)
-            ->select('id', 'code', 'name')
-            ->get();
+            ->map(fn ($row) => (object) [
+                'id' => (int) $row->id,
+                'code' => $row->code,
+                'name' => $row->name,
+            ])
+            ->values();
+
         return response()->json($programs);
     }
 
     public function getYearLevelsByProgram(int $programId)
     {
-        $yearLevels = DB::table('year_levels')
+        $yearLevels = app(AcademicStructureRepository::class)->yearLevels()
             ->where('program_id', $programId)
-            ->select('id', 'year_number', 'name')
-            ->orderBy('year_number')
-            ->get();
+            ->sortBy('year_number')
+            ->map(fn ($row) => (object) [
+                'id' => (int) $row->id,
+                'year_number' => (int) $row->year_number,
+                'name' => $row->name,
+            ])
+            ->values();
+
         return response()->json($yearLevels);
     }
 
     public function getBlocksByYearLevel(int $yearLevelId)
     {
-        $blocks = DB::table('blocks')
+        $blocks = app(AcademicStructureRepository::class)->blocks()
             ->where('year_level_id', $yearLevelId)
-            ->select('id', 'block_number', 'name')
-            ->orderBy('block_number')
-            ->get();
+            ->sortBy('block_number')
+            ->map(fn ($row) => (object) [
+                'id' => (int) $row->id,
+                'block_number' => (int) $row->block_number,
+                'name' => $row->name,
+            ])
+            ->values();
+
         return response()->json($blocks);
     }
 
     public function getDepartments()
     {
-        $departments = DB::table('departments')
-            ->select('id', 'code', 'name')
-            ->get();
+        $departments = app(AcademicStructureRepository::class)->departments()
+            ->map(fn ($row) => (object) [
+                'id' => (int) $row->id,
+                'code' => $row->code,
+                'name' => $row->name,
+            ])
+            ->values();
+
         return response()->json($departments);
     }
 
     public function editUser(int $id)
     {
-        $user = DB::table('users')->where('id', $id)->first();
+        $structure = app(AcademicStructureRepository::class);
+        $staff = app(StaffRepository::class);
+
+        // The users directory, staff records and placement chain are all served by
+        // the mock API now.
+        $user = $staff->user($id);
         if (!$user) {
             return back()->with('error', 'User not found.');
         }
 
-        $departments = DB::table('departments')->get();
-        $programs = DB::table('programs')->get();
-        $yearLevels = DB::table('year_levels')->get();
-        $blocks = DB::table('blocks')->get();
+        $departments = $structure->departments();
+        $programs = $structure->programs();
+        $yearLevels = $structure->yearLevels();
+        $blocks = $structure->blocks();
         
         $additional = null;
         $studentDetails = null;
         
-        if ($user->role === 'master_teacher') {
-            $additional = DB::table('master_teachers')->where('user_id', $user->id)->first();
+        if ($user->role === 'academic_head') {
+            $additional = $staff->academicHeadForUser($user->id);
         } elseif ($user->role === 'guidance_counselor') {
-            $additional = DB::table('counselors')->where('user_id', $user->id)->first();
+            $additional = $staff->counselorForUser($user->id);
         } elseif ($user->role === 'student') {
-            $studentDetails = DB::table('students')->where('email', $user->email)->first();
-            if ($studentDetails) {
-                $block = DB::table('blocks')->where('id', $studentDetails->block_id)->first();
-                if ($block) {
-                    $yearLevel = DB::table('year_levels')->where('id', $block->year_level_id)->first();
-                    if ($yearLevel) {
-                        $program = DB::table('programs')->where('id', $yearLevel->program_id)->first();
-                        $studentDetails->program_id = $program->id ?? null;
-                        $studentDetails->year_level_id = $yearLevel->id ?? null;
-                    }
+            $studentDetails = app(StudentRepository::class)->findByEmail($user->email);
+
+            if ($studentDetails !== null && $studentDetails->block_id !== null) {
+                $placement = $structure->blockPlacement($studentDetails->block_id);
+
+                // The previous nested lookups set both keys only when the block and
+                // year level resolved.
+                if ($placement !== null && $placement['year_level_id'] !== null) {
+                    $studentDetails = clone $studentDetails;
+                    $studentDetails->program_id = $placement['program_id'];
+                    $studentDetails->year_level_id = $placement['year_level_id'];
                 }
             }
         }
@@ -280,7 +396,8 @@ class DashboardController extends Controller
 
     public function updateUser(Request $request, int $id)
     {
-        $user = DB::table('users')->where('id', $id)->first();
+        // The users directory is served by the mock API now.
+        $user = app(StaffRepository::class)->user($id);
         if (!$user) {
             return redirect()->route('admin.users.index')->with('error', 'User not found.');
         }
@@ -288,17 +405,24 @@ class DashboardController extends Controller
         $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|email|unique:users,email,' . $id,
-            'role' => 'required|in:admin,master_teacher,guidance_counselor,student',
+            'role' => 'required|in:admin,academic_head,guidance_counselor,student',
             'password' => 'nullable|string|min:6',
-            'department_id' => 'nullable|exists:departments,id',
-            'program_id' => 'nullable|exists:programs,id',
-            'year_level_id' => 'nullable|exists:year_levels,id',
-            'block_id' => 'nullable|exists:blocks,id',
+            'department_id' => ['nullable', 'required_if:role,academic_head', new ApiExists('departments', 'id')],
+            'program_id' => ['nullable', new ApiExists('programs', 'id')],
+            'year_level_id' => ['nullable', new ApiExists('year_levels', 'id')],
+            'block_id' => ['nullable', new ApiExists('blocks', 'id')],
             'first_name' => 'nullable|string|max:50',
             'last_name' => 'nullable|string|max:50',
             'student_number' => 'nullable|string|max:30',
             'status' => 'nullable|string|in:Active,Inactive',
         ]);
+
+        // Everything the write path needs from the API is read BEFORE the transaction
+        // opens, so no HTTP request is ever made while a transaction is held.
+        $studentsByEmail = app(StudentRepository::class)->keyedByEmail();
+        $existingStudent = $studentsByEmail[(string) $user->email] ?? null;
+
+        $this->mirror->defer();
 
         try {
             DB::beginTransaction();
@@ -317,38 +441,11 @@ class DashboardController extends Controller
             }
 
             DB::table('users')->where('id', $id)->update($updateData);
+            $this->mirror->updatedFromLocal('users', $id);
 
-            $departmentId = $request->department_id;
-
-            DB::table('master_teachers')->where('user_id', $id)->delete();
-            DB::table('counselors')->where('user_id', $id)->delete();
-
-            if ($request->role === 'master_teacher' && $departmentId) {
-                DB::table('master_teachers')->insert([
-                    'user_id' => $id,
-                    'department_id' => $departmentId,
-                    'employee_number' => 'MT-' . str_pad($id, 5, '0', STR_PAD_LEFT),
-                    'specialization' => $request->specialization ?? 'General',
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
-            }
-
-            if ($request->role === 'guidance_counselor' && $departmentId) {
-                DB::table('counselors')->insert([
-                    'user_id' => $id,
-                    'department_id' => $departmentId,
-                    'employee_number' => 'GC-' . str_pad($id, 5, '0', STR_PAD_LEFT),
-                    'specialization' => $request->specialization ?? 'Academic Counseling',
-                    'max_caseload' => $request->max_caseload ?? 30,
-                    'office_location' => $request->office_location ?? 'Guidance Office',
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
-            }
+            $this->syncStaffProfile($request, $id);
 
             if ($request->role === 'student') {
-                $existingStudent = DB::table('students')->where('email', $user->email)->first();
                 $oldBlockId = $existingStudent->block_id ?? null;
                 $newBlockId = $request->block_id;
                 $blockChanged = ($oldBlockId && $newBlockId && $oldBlockId != $newBlockId);
@@ -370,13 +467,14 @@ class DashboardController extends Controller
                     }
                     
                     DB::table('students')->where('id', $existingStudent->id)->update($studentUpdateData);
+                    $this->mirror->updatedFromLocal('students', $existingStudent->id);
                     
                     if ($blockChanged) {
                         $this->resetStudentData($existingStudent->id);
                         Log::info('Student data reset for student ID: ' . $existingStudent->id);
                     }
                 } else {
-                    DB::table('students')->insert([
+                    $studentId = DB::table('students')->insertGetId([
                         'block_id' => $newBlockId ?? 1,
                         'student_number' => $request->student_number ?? 'STU-' . str_pad($id, 5, '0', STR_PAD_LEFT),
                         'first_name' => $request->first_name ?? explode(' ', $request->name)[0],
@@ -387,26 +485,111 @@ class DashboardController extends Controller
                         'created_at' => now(),
                         'updated_at' => now(),
                     ]);
+
+                    $this->mirror->createdFromLocal('students', $studentId);
                 }
             }
 
             DB::commit();
+
+            // Network I/O only after the commit.
+            $this->mirror->flush();
+
             return redirect()->route('admin.users.index')->with('success', 'User updated successfully.');
 
         } catch (\Exception $e) {
             DB::rollBack();
+            $this->mirror->discard();
             Log::error('Update user failed: ' . $e->getMessage());
             return back()->with('error', 'Failed to update user: ' . $e->getMessage());
         }
     }
 
+    protected function syncStaffProfile(Request $request, int $userId): void
+    {
+        $head = DB::table('academic_heads')->where('user_id', $userId)->first();
+        $counselor = DB::table('counselors')->where('user_id', $userId)->first();
+
+        $departmentId = $this->resolveDepartment($request, $head ?? $counselor);
+
+        if ($request->role === 'academic_head' && $departmentId !== null) {
+            if ($head !== null) {
+                DB::table('academic_heads')->where('id', $head->id)->update([
+                    'department_id' => $departmentId,
+                    'specialization' => $request->input('specialization', $head->specialization),
+                    'updated_at' => now(),
+                ]);
+
+                $this->mirror->updatedFromLocal('academic_heads', $head->id);
+            } else {
+                $headId = DB::table('academic_heads')->insertGetId([
+                    'user_id' => $userId,
+                    'department_id' => $departmentId,
+                    'employee_number' => 'MT-' . str_pad($userId, 5, '0', STR_PAD_LEFT),
+                    'specialization' => $request->input('specialization', 'General'),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
+                $this->mirror->createdFromLocal('academic_heads', $headId);
+            }
+        } elseif ($head !== null) {
+            DB::table('academic_heads')->where('id', $head->id)->delete();
+            $this->mirror->deleted('academic_heads', $head->id);
+        }
+
+        if ($request->role === 'guidance_counselor' && ($counselor !== null || $departmentId !== null)) {
+            if ($counselor !== null) {
+                DB::table('counselors')->where('id', $counselor->id)->update([
+                    'department_id' => $departmentId,
+                    'specialization' => $request->input('specialization', $counselor->specialization),
+                    'max_caseload' => $request->input('max_caseload', $counselor->max_caseload),
+                    'office_location' => $request->input('office_location', $counselor->office_location),
+                    'updated_at' => now(),
+                ]);
+
+                $this->mirror->updatedFromLocal('counselors', $counselor->id);
+            } else {
+                $counselorId = DB::table('counselors')->insertGetId([
+                    'user_id' => $userId,
+                    'department_id' => $departmentId,
+                    'employee_number' => 'GC-' . str_pad($userId, 5, '0', STR_PAD_LEFT),
+                    'specialization' => $request->input('specialization', 'Academic Counseling'),
+                    'max_caseload' => $request->input('max_caseload', 30),
+                    'office_location' => $request->input('office_location', 'Guidance Office'),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
+                $this->mirror->createdFromLocal('counselors', $counselorId);
+            }
+        } elseif ($counselor !== null) {
+            DB::table('counselors')->where('id', $counselor->id)->delete();
+            $this->mirror->deleted('counselors', $counselor->id);
+        }
+    }
+
+    protected function resolveDepartment(Request $request, ?object $existing): ?int
+    {
+        if (!$request->exists('department_id')) {
+            return $existing !== null && $existing->department_id !== null
+                ? (int) $existing->department_id
+                : null;
+        }
+
+        $value = $request->input('department_id');
+
+        return ($value === null || $value === '') ? null : (int) $value;
+    }
+
     protected function resetStudentData(int $studentId): void
     {
         try {
-            DB::table('grades')->where('student_id', $studentId)->delete();
-            DB::table('attendance')->where('student_id', $studentId)->delete();
-            DB::table('attendance_summaries')->where('student_id', $studentId)->delete();
-            DB::table('attendance_warnings')->where('student_id', $studentId)->delete();
+            foreach (['grades', 'attendance', 'attendance_summaries', 'attendance_warnings'] as $table) {
+                $ids = DB::table($table)->where('student_id', $studentId)->pluck('id')->all();
+                DB::table($table)->where('student_id', $studentId)->delete();
+                $this->mirror->purged($table, $ids);
+            }
             
             $deletedRisk = DB::table('risk_scores')->where('student_id', $studentId)->delete();
             Log::info('Risk scores deleted for student ' . $studentId . ': ' . $deletedRisk . ' records');
@@ -431,9 +614,16 @@ class DashboardController extends Controller
                 DB::table('case_sessions')->whereIn('case_id', $caseIds)->delete();
             }
             
+            // payments are keyed by their own id, so each row is mirrored by id.
+            $paymentIds = DB::table('payments')->where('student_id', $studentId)->pluck('id');
+
             DB::table('payments')
                 ->where('student_id', $studentId)
                 ->update(['status' => 'Paid', 'updated_at' => now()]);
+
+            foreach ($paymentIds as $paymentId) {
+                $this->mirror->updatedFromLocal('payments', $paymentId);
+            }
             
             $this->logActivity('STUDENT_DATA_RESET', 'Student ID: ' . $studentId . ' - Data reset for transfer');
             
@@ -444,7 +634,9 @@ class DashboardController extends Controller
 
     public function deleteUser(int $id)
     {
-        $user = DB::table('users')->where('id', $id)->first();
+        // The users directory lives on the mock API now.
+        $user = app(StaffRepository::class)->user($id);
+
         if (!$user) {
             return response()->json(['success' => false, 'message' => 'User not found.'], 404);
         }
@@ -453,98 +645,146 @@ class DashboardController extends Controller
             return response()->json(['success' => false, 'message' => 'You cannot delete your own account.'], 403);
         }
 
+        // API reads happen BEFORE the transaction opens.
+        $student = $user->role === 'student'
+            ? app(StudentRepository::class)->findByEmail($user->email)
+            : null;
+
+        // Rows to remove are captured up front: json-server needs the primary keys.
+        $staffRowIds = match ($user->role) {
+            'academic_head' => DB::table('academic_heads')->where('user_id', $user->id)->pluck('id')->all(),
+            'guidance_counselor' => DB::table('counselors')->where('user_id', $user->id)->pluck('id')->all(),
+            default => [],
+        };
+
+        $purge = [];
+
+        if ($student !== null) {
+            // Tables the application never owns are purged on the API in bulk.
+            foreach (['parents', 'grades', 'attendance', 'attendance_summaries', 'attendance_warnings'] as $table) {
+                $purge[$table] = DB::table($table)->where('student_id', $student->id)->pluck('id')->all();
+            }
+        }
+
+        $this->mirror->defer();
+
         try {
             DB::beginTransaction();
 
             DB::table('audit_logs')->where('user_id', $user->id)->delete();
 
-            if ($user->role === 'master_teacher') {
-                DB::table('master_teachers')->where('user_id', $user->id)->delete();
+            if ($user->role === 'academic_head') {
+                DB::table('academic_heads')->where('user_id', $user->id)->delete();
             } elseif ($user->role === 'guidance_counselor') {
                 DB::table('counselors')->where('user_id', $user->id)->delete();
-            } elseif ($user->role === 'student') {
-                $student = DB::table('students')->where('email', $user->email)->first();
-                if ($student) {
-                    DB::table('parents')->where('student_id', $student->id)->delete();
-                    DB::table('grades')->where('student_id', $student->id)->delete();
-                    DB::table('attendance')->where('student_id', $student->id)->delete();
-                    DB::table('attendance_summaries')->where('student_id', $student->id)->delete();
-                    DB::table('attendance_warnings')->where('student_id', $student->id)->delete();
-                    DB::table('risk_scores')->where('student_id', $student->id)->delete();
-                    DB::table('flags')->where('student_id', $student->id)->delete();
-                    DB::table('intervention_recommendations')->where('student_id', $student->id)->delete();
-                    DB::table('alert_acknowledgments')->where('student_id', $student->id)->delete();
-                    DB::table('escalations')->where('student_id', $student->id)->delete();
-                    DB::table('cases')->where('student_id', $student->id)->delete();
-                    DB::table('payments')->where('student_id', $student->id)->delete();
-                    DB::table('students')->where('id', $student->id)->delete();
+            } elseif ($user->role === 'student' && $student !== null) {
+                foreach (array_keys($purge) as $table) {
+                    DB::table($table)->where('student_id', $student->id)->delete();
                 }
+
+                DB::table('risk_scores')->where('student_id', $student->id)->delete();
+                DB::table('flags')->where('student_id', $student->id)->delete();
+                DB::table('intervention_recommendations')->where('student_id', $student->id)->delete();
+                DB::table('alert_acknowledgments')->where('student_id', $student->id)->delete();
+                DB::table('escalations')->where('student_id', $student->id)->delete();
+                DB::table('cases')->where('student_id', $student->id)->delete();
+                DB::table('payments')->where('student_id', $student->id)->delete();
+                DB::table('students')->where('id', $student->id)->delete();
             }
 
             DB::table('users')->where('id', $user->id)->delete();
 
+            foreach ($staffRowIds as $staffRowId) {
+                $this->mirror->deleted(
+                    $user->role === 'academic_head' ? 'academic_heads' : 'counselors',
+                    $staffRowId
+                );
+            }
+
+            foreach ($purge as $table => $ids) {
+                $this->mirror->purged($table, $ids);
+            }
+
+            if ($student !== null) {
+                $this->mirror->deleted('students', $student->id);
+            }
+
+            $this->mirror->deleted('users', $user->id);
+
             DB::commit();
+
+            // Network I/O only after the commit.
+            $this->mirror->flush();
+
             $this->logActivity('USER_DELETED', 'Deleted user: ' . $user->email);
             return response()->json(['success' => true, 'message' => 'User deleted successfully.']);
 
         } catch (\Exception $e) {
             DB::rollBack();
+            $this->mirror->discard();
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
 
     protected function updateRoleSpecificData(int $userId, string $role, array $data)
     {
-        DB::table('master_teachers')->where('user_id', $userId)->delete();
-        DB::table('counselors')->where('user_id', $userId)->delete();
+        // Delegates to syncStaffProfile() so the staff-row logic has exactly one
+        // implementation and cannot drift from updateUser().
+        $request = Request::create('/admin/users/' . $userId, 'PUT', array_merge($data, ['role' => $role]));
 
-        if ($role === 'master_teacher' && isset($data['department_id']) && !empty($data['department_id'])) {
-            DB::table('master_teachers')->insert([
-                'user_id' => $userId,
-                'department_id' => $data['department_id'],
-                'employee_number' => 'MT-' . str_pad($userId, 5, '0', STR_PAD_LEFT),
-                'specialization' => $data['specialization'] ?? 'General',
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-        }
-
-        if ($role === 'guidance_counselor' && isset($data['department_id']) && !empty($data['department_id'])) {
-            DB::table('counselors')->insert([
-                'user_id' => $userId,
-                'department_id' => $data['department_id'],
-                'employee_number' => 'GC-' . str_pad($userId, 5, '0', STR_PAD_LEFT),
-                'specialization' => $data['specialization'] ?? 'Academic Counseling',
-                'max_caseload' => $data['max_caseload'] ?? 30,
-                'office_location' => $data['office_location'] ?? 'Guidance Office',
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-        }
-
-        if ($role === 'student') {
-            // Students are updated through a separate process
-        }
+        $this->syncStaffProfile($request, $userId);
     }
 
-    // ============================================
-    // ACADEMIC STRUCTURE
-    // ============================================
 
     public function academic()
     {
-        $departments = \App\Models\Department::withCount('programs')->get();
-        $programs = DB::table('programs')
-            ->join('departments', 'programs.department_id', '=', 'departments.id')
-            ->select('programs.*', 'departments.code as department_code')
-            ->get();
-        $subjects = DB::table('subjects')
-            ->join('programs', 'subjects.program_id', '=', 'programs.id')
-            ->select('subjects.*', 'programs.code as program_code')
-            ->orderBy('programs.code')
-            ->orderBy('subjects.year_level')
-            ->orderBy('subjects.semester')
-            ->get();
+        $structure = app(AcademicStructureRepository::class);
+
+        $departmentIndex = $structure->departments()->keyBy(fn ($row) => (int) $row->id);
+        $programIndex = $structure->programs()->keyBy(fn ($row) => (int) $row->id);
+
+        $programCounts = $structure->programs()
+            ->groupBy(fn ($row) => (int) $row->department_id)
+            ->map->count();
+
+        $departments = $structure->departments()->map(function ($row) use ($programCounts) {
+            $model = new \App\Models\Department();
+            $model->setRawAttributes((array) $row, true);
+            $model->setAttribute('programs_count', (int) ($programCounts[(int) $row->id] ?? 0));
+
+            return $model;
+        })->values();
+
+        $programs = $structure->programs()->map(function ($row) use ($departmentIndex) {
+            $program = clone $row;
+            $department = $departmentIndex[(int) $row->department_id] ?? null;
+            $program->department_code = $department->code ?? null;
+
+            return $program;
+        })->values();
+
+        // `subjects.*` joined to the owning program's code, ordered by program code,
+        // then year level, then semester.
+        $subjects = app(\App\Repositories\Api\SubjectRepository::class)->all()
+            ->map(function ($row) use ($programIndex) {
+                $subject = clone $row;
+                $program = $programIndex[(int) $row->program_id] ?? null;
+                $subject->program_code = $program->code ?? null;
+
+                return $subject;
+            })
+            ->sort(function ($a, $b) {
+                $cmp = strcmp((string) $a->program_code, (string) $b->program_code);
+
+                if ($cmp !== 0) {
+                    return $cmp;
+                }
+
+                $cmp = ((int) $a->year_level <=> (int) $b->year_level);
+
+                return $cmp !== 0 ? $cmp : ((int) $a->semester <=> (int) $b->semester);
+            })
+            ->values();
 
         return view('admin.academic', compact('departments', 'programs', 'subjects'));
     }
@@ -552,19 +792,22 @@ class DashboardController extends Controller
     public function storeDepartment(Request $request)
     {
         $request->validate([
-            'code' => 'required|string|max:10|unique:departments,code',
+            'code' => ['required', 'string', 'max:10', new ApiUnique('departments', 'code')],
             'name' => 'required|string|max:100',
             'description' => 'nullable|string',
         ]);
 
         try {
-            DB::table('departments')->insert([
+            $id = DB::table('departments')->insertGetId([
                 'code' => strtoupper($request->code),
                 'name' => $request->name,
                 'description' => $request->description,
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
+
+            $this->mirror->createdFromLocal('departments', $id);
+
             $this->logActivity('DEPARTMENT_CREATED', 'Created department: ' . $request->code);
             return redirect()->route('admin.academic.index')->with('success', 'Department created successfully.');
         } catch (\Exception $e) {
@@ -575,7 +818,7 @@ class DashboardController extends Controller
     public function updateDepartment(Request $request, int $id)
     {
         $request->validate([
-            'code' => 'required|string|max:10|unique:departments,code,' . $id,
+            'code' => ['required', 'string', 'max:10', new ApiUnique('departments', 'code', $id)],
             'name' => 'required|string|max:100',
             'description' => 'nullable|string',
         ]);
@@ -587,6 +830,9 @@ class DashboardController extends Controller
                 'description' => $request->description,
                 'updated_at' => now(),
             ]);
+
+            $this->mirror->updatedFromLocal('departments', $id);
+
             $this->logActivity('DEPARTMENT_UPDATED', 'Updated department: ' . $request->code);
             return redirect()->route('admin.academic.index')->with('success', 'Department updated successfully.');
         } catch (\Exception $e) {
@@ -597,7 +843,11 @@ class DashboardController extends Controller
     public function deleteDepartment(int $id)
     {
         try {
-            $programCount = DB::table('programs')->where('department_id', $id)->count();
+            // programs are served by the API, so the guard is evaluated against it.
+            $programCount = app(AcademicStructureRepository::class)->programs()
+                ->where('department_id', $id)
+                ->count();
+
             if ($programCount > 0) {
                 return response()->json([
                     'success' => false,
@@ -606,6 +856,9 @@ class DashboardController extends Controller
             }
 
             DB::table('departments')->where('id', $id)->delete();
+
+            $this->mirror->deleted('departments', $id);
+
             $this->logActivity('DEPARTMENT_DELETED', 'Deleted department ID: ' . $id);
             return response()->json(['success' => true, 'message' => 'Department deleted successfully.']);
         } catch (\Exception $e) {
@@ -616,14 +869,14 @@ class DashboardController extends Controller
     public function storeProgram(Request $request)
     {
         $request->validate([
-            'department_id' => 'required|exists:departments,id',
-            'code' => 'required|string|max:10|unique:programs,code',
+            'department_id' => ['required', new ApiExists('departments', 'id')],
+            'code' => ['required', 'string', 'max:10', new ApiUnique('programs', 'code')],
             'name' => 'required|string|max:100',
             'total_students' => 'nullable|integer|min:0',
         ]);
 
         try {
-            DB::table('programs')->insert([
+            $id = DB::table('programs')->insertGetId([
                 'department_id' => $request->department_id,
                 'code' => strtoupper($request->code),
                 'name' => $request->name,
@@ -631,6 +884,9 @@ class DashboardController extends Controller
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
+
+            $this->mirror->createdFromLocal('programs', $id);
+
             $this->logActivity('PROGRAM_CREATED', 'Created program: ' . $request->code);
             return redirect()->route('admin.academic.index')->with('success', 'Program created successfully.');
         } catch (\Exception $e) {
@@ -641,8 +897,8 @@ class DashboardController extends Controller
     public function updateProgram(Request $request, int $id)
     {
         $request->validate([
-            'department_id' => 'required|exists:departments,id',
-            'code' => 'required|string|max:10|unique:programs,code,' . $id,
+            'department_id' => ['required', new ApiExists('departments', 'id')],
+            'code' => ['required', 'string', 'max:10', new ApiUnique('programs', 'code', $id)],
             'name' => 'required|string|max:100',
             'total_students' => 'nullable|integer|min:0',
         ]);
@@ -655,6 +911,9 @@ class DashboardController extends Controller
                 'total_students' => $request->total_students ?? 160,
                 'updated_at' => now(),
             ]);
+
+            $this->mirror->updatedFromLocal('programs', $id);
+
             $this->logActivity('PROGRAM_UPDATED', 'Updated program: ' . $request->code);
             return redirect()->route('admin.academic.index')->with('success', 'Program updated successfully.');
         } catch (\Exception $e) {
@@ -665,7 +924,11 @@ class DashboardController extends Controller
     public function deleteProgram(int $id)
     {
         try {
-            $yearLevelCount = DB::table('year_levels')->where('program_id', $id)->count();
+            // year_levels are served by the API, so the guard is evaluated against it.
+            $yearLevelCount = app(AcademicStructureRepository::class)->yearLevels()
+                ->where('program_id', $id)
+                ->count();
+
             if ($yearLevelCount > 0) {
                 return response()->json([
                     'success' => false,
@@ -674,6 +937,9 @@ class DashboardController extends Controller
             }
 
             DB::table('programs')->where('id', $id)->delete();
+
+            $this->mirror->deleted('programs', $id);
+
             $this->logActivity('PROGRAM_DELETED', 'Deleted program ID: ' . $id);
             return response()->json(['success' => true, 'message' => 'Program deleted successfully.']);
         } catch (\Exception $e) {
@@ -684,16 +950,16 @@ class DashboardController extends Controller
     public function storeSubject(Request $request)
     {
         $request->validate([
-            'program_id' => 'required|exists:programs,id',
+            'program_id' => ['required', new ApiExists('programs', 'id')],
             'year_level' => 'required|integer|min:1|max:4',
             'semester' => 'required|integer|min:1|max:2',
-            'subject_code' => 'required|string|max:20|unique:subjects,subject_code',
+            'subject_code' => ['required', 'string', 'max:20', new ApiUnique('subjects', 'subject_code')],
             'subject_name' => 'required|string|max:200',
             'units' => 'nullable|integer|min:1|max:6',
         ]);
 
         try {
-            DB::table('subjects')->insert([
+            $id = DB::table('subjects')->insertGetId([
                 'program_id' => $request->program_id,
                 'year_level' => $request->year_level,
                 'semester' => $request->semester,
@@ -703,6 +969,9 @@ class DashboardController extends Controller
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
+
+            $this->mirror->createdFromLocal('subjects', $id);
+
             $this->logActivity('SUBJECT_CREATED', 'Created subject: ' . $request->subject_code);
             return redirect()->route('admin.academic.index')->with('success', 'Subject created successfully.');
         } catch (\Exception $e) {
@@ -713,10 +982,10 @@ class DashboardController extends Controller
     public function updateSubject(Request $request, int $id)
     {
         $request->validate([
-            'program_id' => 'required|exists:programs,id',
+            'program_id' => ['required', new ApiExists('programs', 'id')],
             'year_level' => 'required|integer|min:1|max:4',
             'semester' => 'required|integer|min:1|max:2',
-            'subject_code' => 'required|string|max:20|unique:subjects,subject_code,' . $id,
+            'subject_code' => ['required', 'string', 'max:20', new ApiUnique('subjects', 'subject_code', $id)],
             'subject_name' => 'required|string|max:200',
             'units' => 'nullable|integer|min:1|max:6',
         ]);
@@ -731,6 +1000,9 @@ class DashboardController extends Controller
                 'units' => $request->units ?? 3,
                 'updated_at' => now(),
             ]);
+
+            $this->mirror->updatedFromLocal('subjects', $id);
+
             $this->logActivity('SUBJECT_UPDATED', 'Updated subject: ' . $request->subject_code);
             return redirect()->route('admin.academic.index')->with('success', 'Subject updated successfully.');
         } catch (\Exception $e) {
@@ -741,7 +1013,9 @@ class DashboardController extends Controller
     public function deleteSubject(int $id)
     {
         try {
-            $gradeCount = DB::table('grades')->where('subject_id', $id)->count();
+            // grades are served by the API now, so the guard is evaluated against it.
+            $gradeCount = app(GradeRepository::class)->countForSubject($id);
+
             if ($gradeCount > 0) {
                 return response()->json([
                     'success' => false,
@@ -750,6 +1024,9 @@ class DashboardController extends Controller
             }
 
             DB::table('subjects')->where('id', $id)->delete();
+
+            $this->mirror->deleted('subjects', $id);
+
             $this->logActivity('SUBJECT_DELETED', 'Deleted subject ID: ' . $id);
             return response()->json(['success' => true, 'message' => 'Subject deleted successfully.']);
         } catch (\Exception $e) {
@@ -759,100 +1036,131 @@ class DashboardController extends Controller
 
     public function editDepartment(int $id)
     {
-        $department = DB::table('departments')->where('id', $id)->first();
+        $department = app(AcademicStructureRepository::class)->departments()
+            ->firstWhere(fn ($row) => (int) $row->id === $id);
+
         if (!$department) {
             return back()->with('error', 'Department not found.');
         }
+
         return view('admin.academic-edit-department', compact('department'));
     }
 
     public function editProgram(int $id)
     {
-        $program = DB::table('programs')->where('id', $id)->first();
+        $structure = app(AcademicStructureRepository::class);
+
+        $program = $structure->programs()->firstWhere(fn ($row) => (int) $row->id === $id);
+
         if (!$program) {
             return back()->with('error', 'Program not found.');
         }
-        $departments = DB::table('departments')->get();
+
+        $departments = $structure->departments();
+
         return view('admin.academic-edit-program', compact('program', 'departments'));
     }
 
     public function editSubject(int $id)
     {
-        $subject = DB::table('subjects')->where('id', $id)->first();
+        // subjects are served by the mock API now.
+        $subject = app(\App\Repositories\Api\SubjectRepository::class)->find($id);
+
         if (!$subject) {
             return back()->with('error', 'Subject not found.');
         }
-        $programs = DB::table('programs')->get();
+
+        $programs = app(AcademicStructureRepository::class)->programs();
+
         return view('admin.academic-edit-subject', compact('subject', 'programs'));
     }
 
-    // ============================================
-    // RISK CONFIGURATION
-    // ============================================
 
-    public function riskConfig()
+    public function riskConfig(RiskThresholdService $thresholds)
     {
-        $thresholds = DB::table('risk_thresholds')->first();
-        if (!$thresholds) {
-            $thresholds = (object) [
-                'low_threshold' => 40,
-                'moderate_threshold' => 70,
-                'high_threshold' => 71,
-                'grade_weight' => 0.60,
-                'attendance_weight' => 0.40,
-            ];
-        }
-        return view('admin.risk-config', compact('thresholds'));
+        // The view renders its band labels from the SAME values the engine classifies
+        // with, so display, validation, computation and storage can never drift.
+        $config = $thresholds->current();
+        $row = DB::table('risk_thresholds')->orderBy('id')->first();
+
+        $editorName = ($row && $row->updated_by)
+            ? DB::table('users')->where('id', $row->updated_by)->value('name')
+            : null;
+
+        return view('admin.risk-config', [
+            'thresholds' => (object) $config,
+            'bands' => RiskThresholdService::bandLabels($config),
+            'effectiveBands' => RiskThresholdService::effectiveBandLabels($config),
+            'configuredAt' => $row->updated_at ?? null,
+            'configuredBy' => $editorName,
+        ]);
     }
 
-    public function saveRiskConfig(Request $request)
-    {
+    public function saveRiskConfig(
+        Request $request,
+        RiskThresholdService $thresholds,
+        RiskScoringCacheService $cache,
+        RiskScoreRepository $riskScores
+    ) {
         $request->validate([
-            'low_threshold' => 'required|integer|min:0|max:100',
-            'moderate_threshold' => 'required|integer|min:0|max:100',
-            'high_threshold' => 'required|integer|min:0|max:100',
-            'grade_weight' => 'required|numeric|min:0|max:1',
-            'attendance_weight' => 'required|numeric|min:0|max:1',
+            'low_threshold' => 'required|integer|min:0|max:98',
+            'moderate_threshold' => 'required|integer|min:1|max:99',
+            'high_threshold' => 'required|integer|min:2|max:100',
         ]);
 
-        if ($request->low_threshold >= $request->moderate_threshold) {
-            return back()->with('error', 'Low threshold must be less than moderate threshold.');
-        }
-        if ($request->moderate_threshold >= $request->high_threshold) {
-            return back()->with('error', 'Moderate threshold must be less than high threshold.');
-        }
-        if (round($request->grade_weight + $request->attendance_weight, 2) != 1.00) {
-            return back()->with('error', 'Grade weight and attendance weight must sum to 100%.');
+        $config = RiskThresholdService::normalize([
+            'low_threshold' => $request->integer('low_threshold'),
+            'moderate_threshold' => $request->integer('moderate_threshold'),
+            'high_threshold' => $request->integer('high_threshold'),
+        ]);
+
+        // Bands must tile 0-100 with no gap (high = moderate + 1): the engine classifies
+        // every integer score exactly once, so display, validation and computation agree.
+        $error = RiskThresholdService::consistencyError($config);
+        if ($error !== null) {
+            return back()->withInput()->with('error', $error);
         }
 
-        $existing = DB::table('risk_thresholds')->first();
+        $existing = DB::table('risk_thresholds')->orderBy('id')->first();
+
+        $values = [
+            'low_threshold' => $config['low_threshold'],
+            'moderate_threshold' => $config['moderate_threshold'],
+            'high_threshold' => $config['high_threshold'],
+            'updated_by' => auth()->id(),
+            'updated_at' => now(),
+        ];
+
         if ($existing) {
-            DB::table('risk_thresholds')
-                ->where('id', $existing->id)
-                ->update([
-                    'low_threshold' => $request->low_threshold,
-                    'moderate_threshold' => $request->moderate_threshold,
-                    'high_threshold' => $request->high_threshold,
-                    'grade_weight' => $request->grade_weight,
-                    'attendance_weight' => $request->attendance_weight,
-                    'updated_by' => auth()->id(),
-                    'updated_at' => now(),
-                ]);
+            DB::table('risk_thresholds')->where('id', $existing->id)->update($values);
+            $this->mirror->updatedFromLocal('risk_thresholds', $existing->id);
         } else {
-            DB::table('risk_thresholds')->insert([
-                'low_threshold' => $request->low_threshold,
-                'moderate_threshold' => $request->moderate_threshold,
-                'high_threshold' => $request->high_threshold,
-                'grade_weight' => $request->grade_weight,
-                'attendance_weight' => $request->attendance_weight,
-                'updated_by' => auth()->id(),
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
+            $thresholdId = DB::table('risk_thresholds')->insertGetId($values + ['created_at' => now()]);
+            $this->mirror->createdFromLocal('risk_thresholds', $thresholdId);
         }
 
-        $this->logActivity('RISK_CONFIG_UPDATED', 'Risk thresholds updated');
-        return back()->with('success', 'Risk configuration saved successfully.');
+        // A deliberate configuration change must never be deferred by the 60-minute
+        // scoring cache, and the rows already stored must agree with the new bands.
+        $cache->flushAll();
+        $thresholds->forget();
+        $reclassified = $riskScores->reclassifyByBands($config);
+
+        $summary = 'Low 0-' . $config['low_threshold']
+            . ', Moderate ' . ($config['low_threshold'] + 1) . '-' . $config['moderate_threshold']
+            . ', High ' . $config['high_threshold'] . '-100';
+
+        $this->logActivity(
+            'RISK_CONFIG_UPDATED',
+            'Risk thresholds updated to ' . $summary . '; ' . $reclassified
+                . ' stored score(s) re-classified; cached risk scores invalidated'
+        );
+
+        return back()->with(
+            'success',
+            'Risk configuration saved (' . $summary . '). ' . $reclassified
+                . ' stored score(s) re-classified and cached risk scores invalidated - '
+                . 'the next scoring run uses the new bands.'
+        );
     }
 
     public function testAIConnection()
@@ -874,9 +1182,6 @@ class DashboardController extends Controller
         }
     }
 
-    // ============================================
-    // PAYMENT MONITORING
-    // ============================================
 
     public function payments(Request $request)
     {
@@ -885,46 +1190,55 @@ class DashboardController extends Controller
             $departmentFilter = $request->input('department', 'all');
             $searchFilter = $request->input('search', '');
             $paymentType = $request->input('payment_type', 'tuition');
-            
-            $query = DB::table('payments')
-                ->join('students', 'payments.student_id', '=', 'students.id')
-                ->join('blocks', 'students.block_id', '=', 'blocks.id')
-                ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-                ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-                ->join('departments', 'programs.department_id', '=', 'departments.id')
-                ->select(
-                    'payments.*',
-                    'students.id as student_id',
-                    'students.first_name',
-                    'students.last_name',
-                    'students.student_number',
-                    'students.email as student_email',
-                    'programs.code as program_code',
-                    'programs.name as program_name',
-                    'departments.code as department_code',
-                    'departments.name as department_name',
-                    'blocks.name as block_name',
-                    'year_levels.name as year_level_name'
-                );
-            
-            if ($statusFilter !== 'all') {
-                $query->where('payments.status', $statusFilter);
+
+            $payments = collect();
+
+            foreach (app(PaymentRepository::class)->decorated() as $row) {
+                if ($statusFilter !== 'all' && (string) $row->status !== (string) $statusFilter) {
+                    continue;
+                }
+                if ($departmentFilter !== 'all' && (string) $row->department_code !== (string) $departmentFilter) {
+                    continue;
+                }
+                if ($searchFilter !== '') {
+                    $haystacks = [$row->first_name, $row->last_name, $row->student_number, $row->student_email];
+                    $matched = false;
+
+                    foreach ($haystacks as $value) {
+                        if (stripos((string) $value, $searchFilter) !== false) {
+                            $matched = true;
+                            break;
+                        }
+                    }
+
+                    if (!$matched) {
+                        continue;
+                    }
+                }
+
+                $payments->push($row);
             }
-            if ($departmentFilter !== 'all') {
-                $query->where('departments.code', $departmentFilter);
-            }
-            if (!empty($searchFilter)) {
-                $query->where(function($q) use ($searchFilter) {
-                    $q->where('students.first_name', 'LIKE', "%{$searchFilter}%")
-                      ->orWhere('students.last_name', 'LIKE', "%{$searchFilter}%")
-                      ->orWhere('students.student_number', 'LIKE', "%{$searchFilter}%")
-                      ->orWhere('students.email', 'LIKE', "%{$searchFilter}%");
-                });
-            }
-            
-            $payments = $query->orderBy('payments.due_date', 'asc')->paginate(20);
+
+            // ORDER BY payments.due_date ASC, with id ASC as the tiebreak.
+            $payments = $payments->sort(function ($a, $b) {
+                $cmp = strcmp((string) $a->due_date, (string) $b->due_date);
+
+                return $cmp !== 0 ? $cmp : ((int) $a->id <=> (int) $b->id);
+            })->values();
+
+            $perPage = 20;
+            $page = max(1, (int) $request->input('page', 1));
+
+            $payments = new LengthAwarePaginator(
+                $payments->forPage($page, $perPage)->values(),
+                $payments->count(),
+                $perPage,
+                $page,
+                ['path' => LengthAwarePaginator::resolveCurrentPath(), 'query' => $request->query()]
+            );
+
             $stats = $this->getPaymentStats($statusFilter, $departmentFilter);
-            $departments = DB::table('departments')->get();
+            $departments = app(AcademicStructureRepository::class)->departments();
             $departmentSummary = $this->getDepartmentPaymentSummary();
             $overdueSummary = $this->getOverdueSummary();
             $paymentTrend = $this->getPaymentTrend();
@@ -959,29 +1273,29 @@ class DashboardController extends Controller
     protected function getPaymentStats($statusFilter = 'all', $departmentFilter = 'all')
     {
         try {
-            $query = DB::table('payments')
-                ->join('students', 'payments.student_id', '=', 'students.id')
-                ->join('blocks', 'students.block_id', '=', 'blocks.id')
-                ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-                ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-                ->join('departments', 'programs.department_id', '=', 'departments.id');
-            
+            // Aggregation happens in PHP because the joined tables are all served by
+            // the mock API (json-server has no SUM/COUNT/GROUP BY).
+            $rows = app(PaymentRepository::class)->decorated();
+
             if ($statusFilter !== 'all') {
-                $query->where('payments.status', $statusFilter);
+                $rows = $rows->where('status', $statusFilter);
             }
             if ($departmentFilter !== 'all') {
-                $query->where('departments.code', $departmentFilter);
+                $rows = $rows->where('department_code', $departmentFilter);
             }
-            
-            $totalAmount = (clone $query)->sum('payments.amount');
-            $collectedAmount = (clone $query)->sum('payments.paid_amount');
-            $overdueAmount = (clone $query)->where('payments.status', 'Overdue')->sum('payments.balance');
-            $outstandingAmount = (clone $query)->whereIn('payments.status', ['Unpaid', 'Partial', 'Overdue'])->sum('payments.balance');
-            $totalCount = (clone $query)->count();
-            $paidCount = (clone $query)->where('payments.status', 'Paid')->count();
-            $partialCount = (clone $query)->where('payments.status', 'Partial')->count();
-            $unpaidCount = (clone $query)->where('payments.status', 'Unpaid')->count();
-            $overdueCount = (clone $query)->where('payments.status', 'Overdue')->count();
+
+            $totalAmount = (float) $rows->sum(fn ($row) => (float) $row->amount);
+            $collectedAmount = (float) $rows->sum(fn ($row) => (float) $row->paid_amount);
+            $overdueAmount = (float) $rows->where('status', 'Overdue')->sum(fn ($row) => (float) $row->balance);
+            $outstandingAmount = (float) $rows
+                ->whereIn('status', ['Unpaid', 'Partial', 'Overdue'])
+                ->sum(fn ($row) => (float) $row->balance);
+
+            $totalCount = $rows->count();
+            $paidCount = $rows->where('status', 'Paid')->count();
+            $partialCount = $rows->where('status', 'Partial')->count();
+            $unpaidCount = $rows->where('status', 'Unpaid')->count();
+            $overdueCount = $rows->where('status', 'Overdue')->count();
             $collectionRate = $totalAmount > 0 ? round(($collectedAmount / $totalAmount) * 100, 1) : 0;
             
             return [
@@ -1016,26 +1330,25 @@ class DashboardController extends Controller
     protected function getDepartmentPaymentSummary()
     {
         try {
-            return DB::table('payments')
-                ->join('students', 'payments.student_id', '=', 'students.id')
-                ->join('blocks', 'students.block_id', '=', 'blocks.id')
-                ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-                ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-                ->join('departments', 'programs.department_id', '=', 'departments.id')
-                ->select(
-                    'departments.code as department',
-                    DB::raw('COUNT(*) as total_students'),
-                    DB::raw('SUM(payments.amount) as total_amount'),
-                    DB::raw('SUM(payments.paid_amount) as collected_amount'),
-                    DB::raw('SUM(payments.balance) as outstanding_amount'),
-                    DB::raw('SUM(CASE WHEN payments.status = "Paid" THEN 1 ELSE 0 END) as paid_count'),
-                    DB::raw('SUM(CASE WHEN payments.status = "Overdue" THEN 1 ELSE 0 END) as overdue_count'),
-                    DB::raw('SUM(CASE WHEN payments.status = "Unpaid" THEN 1 ELSE 0 END) as unpaid_count'),
-                    DB::raw('SUM(CASE WHEN payments.status = "Partial" THEN 1 ELSE 0 END) as partial_count')
-                )
-                ->groupBy('departments.code')
-                ->orderBy('departments.code')
-                ->get();
+            // GROUP BY departments.code, with the SUM(CASE WHEN ...) counters folded
+            // in PHP because the tables are all served by the mock API.
+            return app(PaymentRepository::class)->decorated()
+                ->groupBy(fn ($row) => (string) $row->department_code)
+                ->map(function ($rows, $department) {
+                    return (object) [
+                        'department' => $department,
+                        'total_students' => $rows->count(),
+                        'total_amount' => (float) $rows->sum(fn ($row) => (float) $row->amount),
+                        'collected_amount' => (float) $rows->sum(fn ($row) => (float) $row->paid_amount),
+                        'outstanding_amount' => (float) $rows->sum(fn ($row) => (float) $row->balance),
+                        'paid_count' => $rows->where('status', 'Paid')->count(),
+                        'overdue_count' => $rows->where('status', 'Overdue')->count(),
+                        'unpaid_count' => $rows->where('status', 'Unpaid')->count(),
+                        'partial_count' => $rows->where('status', 'Partial')->count(),
+                    ];
+                })
+                ->sortKeys()
+                ->values();
         } catch (\Exception $e) {
             Log::error('Department Payment Summary Error: ' . $e->getMessage());
             return collect();
@@ -1045,67 +1358,77 @@ class DashboardController extends Controller
     protected function getOverdueSummary()
     {
         try {
-            return DB::table('payments')
-                ->join('students', 'payments.student_id', '=', 'students.id')
-                ->join('blocks', 'students.block_id', '=', 'blocks.id')
-                ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-                ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-                ->join('departments', 'programs.department_id', '=', 'departments.id')
-                ->where('payments.status', 'Overdue')
-                ->select(
-                    'students.id as student_id',
-                    'students.first_name',
-                    'students.last_name',
-                    'students.student_number',
-                    'students.email',
-                    'payments.amount',
-                    'payments.paid_amount',
-                    'payments.balance',
-                    'payments.due_date',
-                    'payments.fee_type',
-                    'programs.code as program_code',
-                    'departments.code as department_code',
-                    DB::raw('DATEDIFF(CURDATE(), payments.due_date) as days_overdue')
-                )
-                ->orderBy('payments.due_date', 'asc')
-                ->limit(10)
-                ->get();
+            $today = $this->databaseToday();
+
+            return app(PaymentRepository::class)->decorated()
+                ->where('status', 'Overdue')
+                ->sort(function ($a, $b) {
+                    $cmp = strcmp((string) $a->due_date, (string) $b->due_date);
+
+                    return $cmp !== 0 ? $cmp : ((int) $a->id <=> (int) $b->id);
+                })
+                ->take(10)
+                ->map(function ($row) use ($today) {
+                    $summary = clone $row;
+                    $summary->email = $row->student_email;
+                    $summary->days_overdue = $this->datediff($today, (string) $row->due_date);
+
+                    return $summary;
+                })
+                ->values();
         } catch (\Exception $e) {
             Log::error('Overdue Summary Error: ' . $e->getMessage());
             return collect();
         }
     }
 
-    /**
- * Get payment trend data for chart.
- */
+    protected function databaseToday(): string
+    {
+        $row = DB::selectOne('SELECT CURDATE() AS today');
+
+        return (string) ($row->today ?? date('Y-m-d'));
+    }
+
+    protected function datediff(string $from, string $to): int
+    {
+        $fromDate = new \DateTimeImmutable($from);
+        $toDate = new \DateTimeImmutable($to);
+        $days = (int) $fromDate->diff($toDate)->days;
+
+        return $toDate <= $fromDate ? $days : -$days;
+    }
+
 protected function getPaymentTrend(): array
 {
     try {
         $months = [];
         $collected = [];
         $overdue = [];
+
+        // Both source tables are served by the mock API, so the per-month sums are
+        // folded in PHP rather than by SQL aggregates.
+        $history = app(PaymentRepository::class)->history();
+        $payments = app(PaymentRepository::class)->all();
         
         for ($i = 0; $i < 6; $i++) {
             $month = now()->subMonths($i);
             $monthName = $month->format('M Y');
             $months[] = $monthName;
             
-            // Collected amount for this month
-            $collectedAmount = DB::table('payment_history')
-                ->whereMonth('created_at', $month->month)
-                ->whereYear('created_at', $month->year)
-                ->where('action', 'Payment Received')
-                ->sum('amount_changed');
+            $collectedAmount = $history
+                ->filter(fn ($row) => (int) \Carbon\Carbon::parse($row->created_at)->month === $month->month
+                    && (int) \Carbon\Carbon::parse($row->created_at)->year === $month->year
+                    && (string) $row->action === 'Payment Received')
+                ->sum(fn ($row) => (float) $row->amount_changed);
             
             $collected[] = round((float) $collectedAmount, 2);
             
-            // Overdue amount for this month
-            $overdueAmount = DB::table('payments')
-                ->whereMonth('due_date', $month->month)
-                ->whereYear('due_date', $month->year)
-                ->where('status', 'Overdue')
-                ->sum('balance');
+            $overdueAmount = $payments
+                ->filter(fn ($row) => $row->due_date !== null
+                    && (int) \Carbon\Carbon::parse($row->due_date)->month === $month->month
+                    && (int) \Carbon\Carbon::parse($row->due_date)->year === $month->year
+                    && (string) $row->status === 'Overdue')
+                ->sum(fn ($row) => (float) $row->balance);
             
             $overdue[] = round((float) $overdueAmount, 2);
         }
@@ -1126,30 +1449,16 @@ protected function getPaymentTrend(): array
     }
 }
 
-    /**
- * View payment details.
- */
 public function viewPayment(int $id)
 {
     try {
-        $payment = DB::table('payments')
-            ->join('students', 'payments.student_id', '=', 'students.id')
-            ->join('programs', DB::raw('(SELECT program_id FROM year_levels WHERE year_levels.id = (SELECT year_level_id FROM blocks WHERE blocks.id = students.block_id))'), '=', DB::raw('programs.id'))
-            ->where('payments.id', $id)
-            ->select(
-                'payments.*',
-                'students.first_name',
-                'students.last_name',
-                'students.student_number',
-                'programs.code as program_code'
-            )
-            ->first();
+        // payments, students and the placement chain are served by the mock API now.
+        $payment = app(PaymentRepository::class)->decoratedById($id);
         
         if (!$payment) {
             return response()->json(['success' => false, 'message' => 'Payment not found.'], 404);
         }
         
-        // Convert numeric fields to float
         $payment->amount = (float) $payment->amount;
         $payment->paid_amount = (float) $payment->paid_amount;
         $payment->balance = (float) $payment->balance;
@@ -1162,9 +1471,6 @@ public function viewPayment(int $id)
     }
 }
 
- /**
- * Get payment info for recording - Enhanced with detailed error handling.
- */
 public function getPaymentInfo($id)
 {
     $debug = [
@@ -1180,15 +1486,23 @@ public function getPaymentInfo($id)
 
         Log::info('[GetPaymentInfo] Fetching payment info', $debug);
 
-        $payment = DB::table('payments')
-            ->join('students', 'payments.student_id', '=', 'students.id')
-            ->where('payments.id', $id)
-            ->select(
-                'payments.balance',
-                'students.first_name',
-                'students.last_name'
-            )
-            ->first();
+        // payments and students are both served by the mock API; the join is
+        // reconstructed in PHP, keeping the INNER JOIN semantics of the original.
+        $repository = app(PaymentRepository::class);
+        $paymentRow = $repository->find($id);
+        $student = $paymentRow !== null
+            ? app(StudentRepository::class)->find($paymentRow->student_id)
+            : null;
+
+        $payment = null;
+
+        if ($paymentRow !== null && $student !== null) {
+            $payment = (object) [
+                'balance' => $paymentRow->balance,
+                'first_name' => $student->first_name,
+                'last_name' => $student->last_name,
+            ];
+        }
 
         if (!$payment) {
             $debug['payment_found'] = false;
@@ -1228,9 +1542,6 @@ public function getPaymentInfo($id)
         ], 500);
     }
 }
-/**
- * Record a payment - Enhanced with detailed error handling.
- */
 public function recordPayment(Request $request, $id)
 {
     $debug = [
@@ -1243,13 +1554,11 @@ public function recordPayment(Request $request, $id)
     ];
 
     try {
-        // Cast ID to integer
         $id = (int) $id;
         $debug['payment_id_int'] = $id;
         
         Log::info('[RecordPayment] Starting payment recording', $debug);
 
-        // Validate request
         try {
             $validated = $request->validate([
                 'amount' => 'required|numeric|min:0.01',
@@ -1270,9 +1579,9 @@ public function recordPayment(Request $request, $id)
             ], 422);
         }
 
-        // Find payment
         try {
-            $payment = DB::table('payments')->where('id', $id)->first();
+            // payments is served by the mock API now.
+            $payment = app(PaymentRepository::class)->find($id);
             if (!$payment) {
                 $debug['payment_found'] = false;
                 Log::warning('[RecordPayment] Payment not found', $debug);
@@ -1307,12 +1616,10 @@ public function recordPayment(Request $request, $id)
             ], 500);
         }
 
-        // Calculate new values
         try {
             $newPaidAmount = (float) $payment->paid_amount + (float) $request->amount;
             $newBalance = (float) $payment->amount - $newPaidAmount;
             
-            // Determine new status
             if ($newBalance <= 0.01) {
                 $newStatus = 'Paid';
             } elseif ($newPaidAmount > 0) {
@@ -1347,10 +1654,11 @@ public function recordPayment(Request $request, $id)
 
         // Database transaction
         try {
+            $this->mirror->defer();
+
             DB::beginTransaction();
             $debug['transaction_started'] = true;
 
-            // Update payment
             $updated = DB::table('payments')
                 ->where('id', $id)
                 ->update([
@@ -1361,14 +1669,15 @@ public function recordPayment(Request $request, $id)
                     'updated_by' => auth()->id(),
                 ]);
 
+            $this->mirror->updatedFromLocal('payments', $id);
+
             $debug['payment_update'] = [
                 'rows_affected' => $updated,
                 'query' => 'UPDATE payments SET paid_amount = ?, balance = ?, status = ?, last_payment_date = ?, updated_at = ?, updated_by = ? WHERE id = ?',
             ];
             Log::info('[RecordPayment] Payment updated', $debug);
 
-            // Record in history
-            $historyInserted = DB::table('payment_history')->insert([
+            $historyId = DB::table('payment_history')->insertGetId([
                 'payment_id' => $id,
                 'action' => 'Payment Received',
                 'old_status' => $payment->status,
@@ -1380,16 +1689,20 @@ public function recordPayment(Request $request, $id)
                 'updated_at' => now(),
             ]);
 
-            $debug['history_inserted'] = $historyInserted;
+            $this->mirror->createdFromLocal('payment_history', $historyId);
+
+            $debug['history_inserted'] = $historyId;
             Log::info('[RecordPayment] Payment history recorded', $debug);
 
-            // Log activity
             $this->logActivity('PAYMENT_RECORDED', 'Payment recorded for student ' . $payment->student_id . ' | Amount: ' . $request->amount);
             $debug['activity_logged'] = true;
 
             DB::commit();
             $debug['transaction_committed'] = true;
-            
+
+            // Network I/O only after the commit.
+            $this->mirror->flush();
+
             Log::info('[RecordPayment] Payment recorded successfully', $debug);
 
             return response()->json([
@@ -1405,6 +1718,8 @@ public function recordPayment(Request $request, $id)
                 DB::rollBack();
                 $debug['transaction_rolled_back'] = true;
             }
+            // Nothing was committed, so the queued mirrors must not be sent.
+            $this->mirror->discard();
             $debug['error'] = [
                 'message' => $e->getMessage(),
                 'file' => $e->getFile(),
@@ -1441,13 +1756,7 @@ public function recordPayment(Request $request, $id)
 
 
 
-// ============================================
-// EXPORT PAYMENTS 
-// ============================================
 
-/**
- * Export payments report as CSV.
- */
 public function exportPayments(Request $request)
 {
     try {
@@ -1463,56 +1772,42 @@ public function exportPayments(Request $request)
             'ip' => $request->ip(),
         ]);
         
-        // Build query
-        $query = DB::table('payments')
-            ->join('students', 'payments.student_id', '=', 'students.id')
-            ->join('blocks', 'students.block_id', '=', 'blocks.id')
-            ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-            ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-            ->join('departments', 'programs.department_id', '=', 'departments.id')
-            ->select(
-                'students.student_number',
-                'students.first_name',
-                'students.last_name',
-                'students.email',
-                'programs.code as program_code',
-                'programs.name as program_name',
-                'departments.code as department_code',
-                'payments.fee_type',
-                'payments.amount',
-                'payments.paid_amount',
-                'payments.balance',
-                'payments.status',
-                'payments.due_date',
-                'payments.last_payment_date'
-            );
-        
+        // payments, students and the placement chain are served by the mock API, so the
+        // six-table JOIN is rebuilt in PHP (INNER JOIN semantics live in decorated()).
+        $payments = app(PaymentRepository::class)->decorated();
+
         if ($statusFilter !== 'all') {
-            $query->where('payments.status', $statusFilter);
+            $payments = $payments->where('status', $statusFilter);
         }
-        
+
         if ($departmentFilter !== 'all') {
-            $query->where('departments.code', $departmentFilter);
+            $payments = $payments->where('department_code', $departmentFilter);
         }
-        
+
         if (!empty($searchFilter)) {
-            $query->where(function($q) use ($searchFilter) {
-                $q->where('students.first_name', 'LIKE', "%{$searchFilter}%")
-                  ->orWhere('students.last_name', 'LIKE', "%{$searchFilter}%")
-                  ->orWhere('students.student_number', 'LIKE', "%{$searchFilter}%")
-                  ->orWhere('students.email', 'LIKE', "%{$searchFilter}%");
+            $payments = $payments->filter(function ($row) use ($searchFilter) {
+                foreach ([$row->first_name, $row->last_name, $row->student_number, $row->student_email] as $value) {
+                    if (stripos((string) $value, $searchFilter) !== false) {
+                        return true;
+                    }
+                }
+
+                return false;
             });
         }
-        
-        $payments = $query->orderBy('payments.due_date', 'asc')->get();
+
+        // ORDER BY payments.due_date ASC, with id ASC as the tiebreak.
+        $payments = $payments->sort(function ($a, $b) {
+            $cmp = strcmp((string) $a->due_date, (string) $b->due_date);
+
+            return $cmp !== 0 ? $cmp : ((int) $a->id <=> (int) $b->id);
+        })->values();
         
         Log::info('[Export] Payment records fetched', ['count' => $payments->count()]);
         
-        // Generate CSV
         $filename = 'payment_report_' . date('Y-m-d_His') . '.csv';
         $handle = fopen('php://temp', 'r+');
         
-        // Headers
         fputcsv($handle, [
             'Student Number',
             'First Name',
@@ -1529,13 +1824,12 @@ public function exportPayments(Request $request)
             'Last Payment Date'
         ]);
         
-        // Data rows
         foreach ($payments as $payment) {
             fputcsv($handle, [
                 $payment->student_number,
                 $payment->first_name,
                 $payment->last_name,
-                $payment->email,
+                $payment->student_email,
                 $payment->program_code . ' - ' . $payment->program_name,
                 $payment->department_code,
                 $payment->fee_type,
@@ -1554,7 +1848,6 @@ public function exportPayments(Request $request)
         
         Log::info('[Export] CSV generated successfully', ['size' => strlen($csvContent)]);
         
-        // Return CSV as download
         return response($csvContent, 200, [
             'Content-Type' => 'text/csv; charset=UTF-8',
             'Content-Disposition' => 'attachment; filename="' . $filename . '"',
@@ -1577,9 +1870,6 @@ public function exportPayments(Request $request)
 
 
 
-    // ============================================
-    // AUDIT LOGS
-    // ============================================
 
     public function auditLogs(Request $request)
     {
@@ -1588,63 +1878,176 @@ public function exportPayments(Request $request)
         $dateFrom = $request->input('date_from', now()->subDays(30)->format('Y-m-d'));
         $dateTo = $request->input('date_to', now()->format('Y-m-d'));
         
-        $query = DB::table('audit_logs')
-            ->join('users', 'audit_logs.user_id', '=', 'users.id')
-            ->select('audit_logs.*', 'users.name as user_name', 'users.email as user_email')
-            ->whereBetween('audit_logs.created_at', [$dateFrom . ' 00:00:00', $dateTo . ' 23:59:59']);
-        
+        // audit_logs stays local, but `users` is served by the mock API, so the join is
+        // reconstructed in PHP. The filters are applied against the local rows first.
+        $usersById = app(StaffRepository::class)->users()
+            ->keyBy(fn ($row) => (int) $row->id);
+
+        $logs = DB::table('audit_logs')
+            ->whereBetween('created_at', [$dateFrom . ' 00:00:00', $dateTo . ' 23:59:59']);
+
         if ($actionFilter !== 'all') {
-            $query->where('audit_logs.action', $actionFilter);
+            $logs->where('action', $actionFilter);
         }
         if ($userFilter !== 'all') {
-            $query->where('audit_logs.user_id', $userFilter);
+            $logs->where('user_id', $userFilter);
         }
-        
-        $logs = $query->orderBy('audit_logs.created_at', 'desc')->paginate(50);
-        $logs->getCollection()->transform(function ($log) {
-            $log->created_at = \Carbon\Carbon::parse($log->created_at);
-            return $log;
-        });
-        
-        $users = DB::table('users')->select('id', 'name')->get();
+
+        $logs = $logs->orderBy('created_at', 'desc')
+            ->paginate(50)
+            ->through(function ($log) use ($usersById) {
+                $user = $usersById[(int) $log->user_id] ?? null;
+                $log->user_name = $user->name ?? null;
+                $log->user_email = $user->email ?? null;
+                $log->created_at = \Carbon\Carbon::parse($log->created_at);
+
+                return $log;
+            });
+
+        $users = app(StaffRepository::class)->users()
+            ->map(fn ($row) => (object) ['id' => (int) $row->id, 'name' => $row->name])
+            ->values();
+
         $actions = DB::table('audit_logs')->distinct()->pluck('action');
         
         return view('admin.audit-logs', compact('logs', 'users', 'actions', 'dateFrom', 'dateTo'));
     }
 
-    // ============================================
-    // SCHOOL YEAR
-    // ============================================
+    public function exportAuditLogs(Request $request)
+    {
+        try {
+            $actionFilter = $request->input('action', 'all');
+            $userFilter = $request->input('user', 'all');
+            $dateFrom = $request->input('date_from', now()->subDays(30)->format('Y-m-d'));
+            $dateTo = $request->input('date_to', now()->format('Y-m-d'));
+
+            Log::info('[AuditExport] Starting audit log export', [
+                'date_from' => $dateFrom,
+                'date_to' => $dateTo,
+                'action' => $actionFilter,
+                'user' => $userFilter,
+            ]);
+
+            $usersById = app(StaffRepository::class)->users()
+                ->keyBy(fn ($row) => (int) $row->id);
+
+            $logs = DB::table('audit_logs')
+                ->whereBetween('created_at', [$dateFrom . ' 00:00:00', $dateTo . ' 23:59:59']);
+
+            if ($actionFilter !== 'all') {
+                $logs->where('action', $actionFilter);
+            }
+            if ($userFilter !== 'all') {
+                $logs->where('user_id', $userFilter);
+            }
+
+            $logs = $logs->orderBy('created_at', 'desc')->get();
+
+            $filename = 'audit_logs_' . date('Y-m-d_His') . '.csv';
+            $handle = fopen('php://temp', 'r+');
+
+            // The same four columns the table shows, in the same order.
+            fputcsv($handle, ['Date/Time', 'User', 'Action', 'IP Address']);
+
+            foreach ($logs as $log) {
+                $user = $usersById[(int) $log->user_id] ?? null;
+
+                fputcsv($handle, [
+                    \Carbon\Carbon::parse($log->created_at)->format('Y-m-d H:i:s'),
+                    // Null when the id is not in the directory — the page renders the
+                    // cell empty in that case, so the file leaves it empty too.
+                    $user->name ?? null,
+                    $log->action,
+                    $log->ip_address,
+                ]);
+            }
+
+            rewind($handle);
+            $csvContent = stream_get_contents($handle);
+            fclose($handle);
+
+            Log::info('[AuditExport] CSV generated successfully', [
+                'rows' => $logs->count(),
+                'size' => strlen($csvContent),
+            ]);
+
+            return response($csvContent, 200, [
+                'Content-Type' => 'text/csv; charset=UTF-8',
+                'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+                'Cache-Control' => 'no-cache, no-store, must-revalidate',
+                'Pragma' => 'no-cache',
+                'Expires' => '0',
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('[AuditExport] Export error: ' . $e->getMessage());
+            Log::error('[AuditExport] Export trace: ' . $e->getTraceAsString());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to export audit logs: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
 
     public function schoolYear()
     {
-        $schoolYears = DB::table('school_years')->orderBy('name', 'desc')->get();
-        $currentYear = $schoolYears->where('is_active', true)->first();
+        // school_years is served by the mock API now.
+        $schoolYears = app(CalendarRepository::class)->schoolYears()
+            ->sortByDesc(fn ($row) => (string) $row->name)
+            ->values();
+
+        $currentYear = $schoolYears->first(fn ($row) => (bool) $row->is_active);
+
         return view('admin.school-year', compact('schoolYears', 'currentYear'));
     }
 
     public function createSchoolYear(Request $request)
     {
         $request->validate([
-            'name' => 'required|string|unique:school_years,name',
+            'name' => ['required', 'string', new ApiUnique('school_years', 'name')],
             'started_at' => 'required|date',
             'ended_at' => 'nullable|date|after:started_at',
             'is_active' => 'boolean',
         ]);
 
-        if ($request->is_active) {
-            DB::table('school_years')->update(['is_active' => false]);
-        }
+        $this->mirror->defer();
 
-        DB::table('school_years')->insert([
-            'name' => $request->name,
-            'started_at' => $request->started_at,
-            'ended_at' => $request->ended_at,
-            'is_active' => $request->is_active ?? false,
-            'is_archived' => false,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        try {
+            DB::beginTransaction();
+
+            if ($request->is_active) {
+                $deactivated = DB::table('school_years')->where('is_active', true)->pluck('id')->all();
+
+                DB::table('school_years')->update(['is_active' => false]);
+
+                foreach ($deactivated as $yearId) {
+                    $this->mirror->updatedFromLocal('school_years', $yearId);
+                }
+            }
+
+            $id = DB::table('school_years')->insertGetId([
+                'name' => $request->name,
+                'started_at' => $request->started_at,
+                'ended_at' => $request->ended_at,
+                'is_active' => $request->is_active ?? false,
+                'is_archived' => false,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            $this->mirror->createdFromLocal('school_years', $id);
+
+            DB::commit();
+
+            // Network I/O only after the commit.
+            $this->mirror->flush();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            $this->mirror->discard();
+
+            return back()->with('error', 'Failed to create school year: ' . $e->getMessage());
+        }
 
         $this->logActivity('SCHOOL_YEAR_CREATED', 'Created school year: ' . $request->name);
         return back()->with('success', 'School year created successfully.');
@@ -1652,7 +2055,9 @@ public function exportPayments(Request $request)
 
     public function archiveSchoolYear(Request $request, int $id)
     {
-        $year = DB::table('school_years')->where('id', $id)->first();
+        // school_years is served by the mock API now.
+        $year = app(CalendarRepository::class)->findSchoolYear($id);
+
         if (!$year) {
             return back()->with('error', 'School year not found.');
         }
@@ -1665,6 +2070,8 @@ public function exportPayments(Request $request)
             'updated_at' => now(),
         ]);
 
+        $this->mirror->updatedFromLocal('school_years', $id);
+
         $this->logActivity('SCHOOL_YEAR_ARCHIVED', 'Archived school year: ' . $year->name);
         return back()->with('success', 'School year archived successfully.');
     }
@@ -1672,17 +2079,14 @@ public function exportPayments(Request $request)
     public function rolloverSchoolYear(Request $request)
     {
         $request->validate([
-            'from_year' => 'required|exists:school_years,name',
-            'to_year' => 'required|exists:school_years,name|different:from_year',
+            'from_year' => ['required', new ApiExists('school_years', 'name')],
+            'to_year' => ['required', new ApiExists('school_years', 'name'), 'different:from_year'],
         ]);
 
         $this->logActivity('SCHOOL_YEAR_ROLLOVER', 'Rollover from ' . $request->from_year . ' to ' . $request->to_year);
         return back()->with('success', 'School year rollover initiated. Students will be promoted to the next year level.');
     }
 
-    // ============================================
-    // SYSTEM HEALTH
-    // ============================================
 
     public function systemHealth()
     {
@@ -1699,14 +2103,16 @@ public function exportPayments(Request $request)
         return view('admin.system-health', compact('health', 'errors'));
     }
 
-    // ============================================
-    // STATISTICS & HELPER METHODS
-    // ============================================
 
     protected function getSystemStats(): array
     {
+        // students and payments are served by the mock API; risk_scores and cases
+        // remain local post-computation aggregates.
+        $students = app(StudentRepository::class)->all();
+        $payments = app(PaymentRepository::class)->all();
+
         return [
-            'total_students' => DB::table('students')->where('status', 'Active')->count(),
+            'total_students' => $students->where('status', 'Active')->count(),
             'high_risk' => DB::table('risk_scores')
                 ->where('risk_level', 'High')->where('grading_period', 'Midterm')->count(),
             'moderate_risk' => DB::table('risk_scores')
@@ -1715,32 +2121,34 @@ public function exportPayments(Request $request)
                 ->where('priority', 'Critical')->whereNotIn('status', ['Resolved', 'Closed'])->count(),
             'open_cases' => DB::table('cases')->whereNotIn('status', ['Resolved', 'Closed'])->count(),
             'resolved_cases' => DB::table('cases')->where('status', 'Resolved')->count(),
-            'total_payments' => DB::table('payments')->sum('amount'),
-            'collected_payments' => DB::table('payments')->sum('paid_amount'),
-            'overdue_payments' => DB::table('payments')->where('status', 'Overdue')->count(),
+            'total_payments' => (float) $payments->sum(fn ($row) => (float) $row->amount),
+            'collected_payments' => (float) $payments->sum(fn ($row) => (float) $row->paid_amount),
+            'overdue_payments' => $payments->where('status', 'Overdue')->count(),
         ];
     }
 
     protected function getRiskByDepartment()
     {
-        return DB::table('departments')
-            ->leftJoin('programs', 'departments.id', '=', 'programs.department_id')
-            ->leftJoin('year_levels', 'programs.id', '=', 'year_levels.program_id')
-            ->leftJoin('blocks', 'year_levels.id', '=', 'blocks.year_level_id')
-            ->leftJoin('students', 'blocks.id', '=', 'students.block_id')
-            ->leftJoin('risk_scores', function($join) {
-                $join->on('students.id', '=', 'risk_scores.student_id')
-                     ->where('risk_scores.grading_period', 'Midterm');
-            })
-            ->select(
-                'departments.id', 'departments.code', 'departments.name',
-                DB::raw('COUNT(DISTINCT students.id) as total_students'),
-                DB::raw('COUNT(CASE WHEN risk_scores.risk_level = "High" THEN 1 END) as high_risk'),
-                DB::raw('COUNT(CASE WHEN risk_scores.risk_level = "Moderate" THEN 1 END) as moderate_risk'),
-                DB::raw('COUNT(CASE WHEN risk_scores.risk_level = "Low" THEN 1 END) as low_risk')
-            )
-            ->groupBy('departments.id', 'departments.code', 'departments.name')
-            ->get();
+        $structure = app(AcademicStructureRepository::class);
+        $riskScores = app(RiskScoreRepository::class);
+        $data = [];
+
+        foreach ($structure->departments()->sortBy('code')->values() as $department) {
+            $studentIds = $structure->studentIdsInDepartment($department->id, false);
+            $counts = $riskScores->levelCountsForPeriodAllYears($studentIds, 'Midterm');
+
+            $data[] = (object) [
+                'id' => (int) $department->id,
+                'code' => $department->code,
+                'name' => $department->name,
+                'total_students' => count($studentIds),
+                'high_risk' => $counts['High'],
+                'moderate_risk' => $counts['Moderate'],
+                'low_risk' => $counts['Low'],
+            ];
+        }
+
+        return collect($data);
     }
 
     protected function getRiskDistribution(): array
@@ -1754,7 +2162,7 @@ public function exportPayments(Request $request)
 
     protected function getRiskTrend(): array
     {
-        $periods = ['Prelim', 'Midterm', 'Semifinal', 'Finals'];
+        $periods = ['Prelim', 'Midterm', 'Finals'];
         $trend = [];
 
         foreach ($periods as $period) {
@@ -1865,14 +2273,19 @@ public function exportPayments(Request $request)
 
     protected function getRecentActivities()
     {
+        // audit_logs stays local; `users` is served by the mock API, so the join is
+        // reconstructed in PHP.
+        $usersById = app(StaffRepository::class)->users()
+            ->keyBy(fn ($row) => (int) $row->id);
+
         $activities = DB::table('audit_logs')
-            ->join('users', 'audit_logs.user_id', '=', 'users.id')
-            ->select('audit_logs.*', 'users.name as user_name')
-            ->orderBy('audit_logs.created_at', 'desc')
+            ->orderBy('created_at', 'desc')
             ->limit(10)
             ->get();
 
-        return $activities->map(function ($activity) {
+        return $activities->map(function ($activity) use ($usersById) {
+            $user = $usersById[(int) $activity->user_id] ?? null;
+            $activity->user_name = $user->name ?? null;
             $activity->created_at = \Carbon\Carbon::parse($activity->created_at);
             return $activity;
         });

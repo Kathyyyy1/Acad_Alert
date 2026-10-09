@@ -16,9 +16,9 @@ class Department extends Model
         return $this->hasMany(Program::class);
     }
 
-    public function masterTeachers(): HasMany
+    public function academicHeads(): HasMany
     {
-        return $this->hasMany(MasterTeacher::class);
+        return $this->hasMany(AcademicHead::class);
     }
 
     public function counselors(): HasMany

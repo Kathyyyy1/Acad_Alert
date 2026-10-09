@@ -2,54 +2,38 @@
 
 namespace App\Helpers;
 
+use App\Repositories\Api\AcademicStructureRepository;
+use App\Repositories\Api\StudentRepository;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
 
 class DepartmentHelper
 {
-    /**
-     * Get the department ID for the current Master Teacher or Counselor.
-     */
     public static function getDepartmentId(Request $request): ?int
     {
         return $request->attributes->get('department_id');
     }
 
-    /**
-     * Get the Master Teacher object for the current user.
-     */
-    public static function getMasterTeacher(Request $request): ?object
+    public static function getAcademicHead(Request $request): ?object
     {
-        return $request->attributes->get('master_teacher');
+        return $request->attributes->get('academic_head');
     }
 
-    /**
-     * Get the Counselor object for the current user.
-     */
     public static function getCounselor(Request $request): ?object
     {
         return $request->attributes->get('counselor');
     }
 
-    /**
-     * Check if the current user is a Master Teacher with a department.
-     */
-    public static function isMasterTeacherWithDepartment(Request $request): bool
+    public static function isAcademicHeadWithDepartment(Request $request): bool
     {
-        return self::getDepartmentId($request) !== null && self::getMasterTeacher($request) !== null;
+        return self::getDepartmentId($request) !== null && self::getAcademicHead($request) !== null;
     }
 
-    /**
-     * Check if the current user is a Counselor with a department.
-     */
     public static function isCounselorWithDepartment(Request $request): bool
     {
         return self::getDepartmentId($request) !== null && self::getCounselor($request) !== null;
     }
 
-    /**
-     * Get all programs for the Master Teacher's or Counselor's department.
-     */
     public static function getDepartmentPrograms(Request $request): array
     {
         $departmentId = self::getDepartmentId($request);
@@ -57,16 +41,12 @@ class DepartmentHelper
             return [];
         }
 
-        return DB::table('programs')
-            ->where('department_id', $departmentId)
-            ->orderBy('name')
-            ->get()
-            ->toArray();
+        // `programs` is served by the mock API.
+        return app(AcademicStructureRepository::class)
+            ->programsForDepartment($departmentId)
+            ->all();
     }
 
-    /**
-     * Get all blocks for the Master Teacher's or Counselor's department.
-     */
     public static function getDepartmentBlocks(Request $request): array
     {
         $departmentId = self::getDepartmentId($request);
@@ -74,21 +54,13 @@ class DepartmentHelper
             return [];
         }
 
-        return DB::table('blocks')
-            ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-            ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-            ->where('programs.department_id', $departmentId)
-            ->select('blocks.*', 'year_levels.year_number', 'programs.code as program_code')
-            ->orderBy('programs.code')
-            ->orderBy('year_levels.year_number')
-            ->orderBy('blocks.block_number')
-            ->get()
-            ->toArray();
+        // blocks -> year_levels -> programs now resolves through the API
+        // placement index instead of a three-table join.
+        return app(AcademicStructureRepository::class)
+            ->blocksWithProgramForDepartment($departmentId)
+            ->all();
     }
 
-    /**
-     * Get students for a specific block (with department isolation).
-     */
     public static function getBlockStudents(Request $request, int $blockId): array
     {
         $departmentId = self::getDepartmentId($request);
@@ -96,29 +68,28 @@ class DepartmentHelper
             return [];
         }
 
-        $students = DB::table('students')
-            ->join('blocks', 'students.block_id', '=', 'blocks.id')
-            ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-            ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-            ->where('blocks.id', $blockId)
-            ->where('programs.department_id', $departmentId)
-            ->select(
-                'students.*',
-                'blocks.name as block_name',
-                'year_levels.year_number',
-                'programs.code as program_code'
-            )
-            ->orderBy('students.last_name')
-            ->orderBy('students.first_name')
-            ->get()
-            ->toArray();
+        // Students and the placement chain now come from the mock API.
+        $structure = app(AcademicStructureRepository::class);
 
-        return $students;
+        if (!$structure->isBlockInDepartment($blockId, $departmentId)) {
+            return [];
+        }
+
+        $placement = $structure->blockPlacement($blockId);
+
+        return app(StudentRepository::class)
+            ->forBlock($blockId, false)
+            ->map(function ($student) use ($placement) {
+                $decorated = clone $student;
+                $decorated->block_name = $placement['block_name'] ?? null;
+                $decorated->year_number = $placement['year_number'] ?? null;
+                $decorated->program_code = $placement['program_code'] ?? null;
+
+                return $decorated;
+            })
+            ->all();
     }
 
-    /**
-     * Check if a block belongs to the Master Teacher's or Counselor's department.
-     */
     public static function isBlockInDepartment(Request $request, int $blockId): bool
     {
         $departmentId = self::getDepartmentId($request);
@@ -126,19 +97,10 @@ class DepartmentHelper
             return false;
         }
 
-        $block = DB::table('blocks')
-            ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-            ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-            ->where('blocks.id', $blockId)
-            ->where('programs.department_id', $departmentId)
-            ->first();
-
-        return $block !== null;
+        return app(AcademicStructureRepository::class)
+            ->isBlockInDepartment($blockId, $departmentId);
     }
 
-    /**
-     * Check if a program belongs to the Master Teacher's or Counselor's department.
-     */
     public static function isProgramInDepartment(Request $request, int $programId): bool
     {
         $departmentId = self::getDepartmentId($request);
@@ -146,17 +108,11 @@ class DepartmentHelper
             return false;
         }
 
-        $program = DB::table('programs')
-            ->where('id', $programId)
-            ->where('department_id', $departmentId)
-            ->first();
+        $program = app(AcademicStructureRepository::class)->program($programId);
 
-        return $program !== null;
+        return $program !== null && (int) $program->department_id === (int) $departmentId;
     }
 
-    /**
-     * Check if a student belongs to the Master Teacher's or Counselor's department.
-     */
     public static function isStudentInDepartment(Request $request, int $studentId): bool
     {
         $departmentId = self::getDepartmentId($request);
@@ -164,20 +120,10 @@ class DepartmentHelper
             return false;
         }
 
-        $student = DB::table('students')
-            ->join('blocks', 'students.block_id', '=', 'blocks.id')
-            ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-            ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-            ->where('students.id', $studentId)
-            ->where('programs.department_id', $departmentId)
-            ->first();
-
-        return $student !== null;
+        return app(AcademicStructureRepository::class)
+            ->isStudentInDepartment($studentId, $departmentId);
     }
 
-    /**
-     * Check if a case belongs to a counselor's department.
-     */
     public static function isCaseInCounselorDepartment(Request $request, int $caseId): bool
     {
         $departmentId = self::getDepartmentId($request);
@@ -185,29 +131,21 @@ class DepartmentHelper
             return false;
         }
 
-        $case = DB::table('cases')
-            ->join('students', 'cases.student_id', '=', 'students.id')
-            ->join('blocks', 'students.block_id', '=', 'blocks.id')
-            ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-            ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-            ->where('cases.id', $caseId)
-            ->where('programs.department_id', $departmentId)
-            ->first();
+        $case = DB::table('cases')->where('id', $caseId)->first(['student_id']);
 
-        return $case !== null;
+        if ($case === null) {
+            return false;
+        }
+
+        return app(AcademicStructureRepository::class)
+            ->isStudentInDepartment($case->student_id, $departmentId);
     }
 
-    /**
-     * Get the counselor's department ID.
-     */
     public static function getCounselorDepartmentId(Request $request): ?int
     {
         return $request->attributes->get('department_id');
     }
 
-    /**
-     * Get all students for a department.
-     */
     public static function getDepartmentStudents(Request $request): array
     {
         $departmentId = self::getDepartmentId($request);
@@ -215,27 +153,30 @@ class DepartmentHelper
             return [];
         }
 
-        return DB::table('students')
-            ->join('blocks', 'students.block_id', '=', 'blocks.id')
-            ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-            ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-            ->where('programs.department_id', $departmentId)
-            ->where('students.status', 'Active')
-            ->select(
-                'students.*',
-                'blocks.name as block_name',
-                'year_levels.year_number',
-                'programs.code as program_code'
-            )
-            ->orderBy('students.last_name')
-            ->orderBy('students.first_name')
-            ->get()
-            ->toArray();
+        $structure = app(AcademicStructureRepository::class);
+        $placements = $structure->studentPlacements();
+        $studentIds = $structure->studentIdsInDepartment($departmentId, true);
+
+        return app(StudentRepository::class)
+            ->activeForIds($studentIds)
+            ->map(function ($student) use ($placements) {
+                $placement = $placements[(int) $student->id] ?? [];
+
+                $decorated = clone $student;
+                $decorated->block_name = $placement['block_name'] ?? null;
+                $decorated->year_number = $placement['year_number'] ?? null;
+                $decorated->program_code = $placement['program_code'] ?? null;
+
+                return $decorated;
+            })
+            ->sortBy([
+                ['last_name', 'asc'],
+                ['first_name', 'asc'],
+            ])
+            ->values()
+            ->all();
     }
 
-    /**
-     * Get all cases for a counselor's department.
-     */
     public static function getDepartmentCases(Request $request): array
     {
         $departmentId = self::getDepartmentId($request);
@@ -248,17 +189,37 @@ class DepartmentHelper
             return [];
         }
 
+        $structure = app(AcademicStructureRepository::class);
+        $studentIds = $structure->studentIdsInDepartment($departmentId, false);
+        $names = app(StudentRepository::class)->nameIndex();
+
+        $priorityRank = ['Critical' => 0, 'High' => 1, 'Medium' => 2, 'Low' => 3];
+
         return DB::table('cases')
-            ->join('students', 'cases.student_id', '=', 'students.id')
-            ->join('blocks', 'students.block_id', '=', 'blocks.id')
-            ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-            ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-            ->where('cases.counselor_id', $counselor->id)
-            ->where('programs.department_id', $departmentId)
-            ->select('cases.*', 'students.first_name', 'students.last_name', 'students.student_number')
-            ->orderByRaw("FIELD(cases.priority, 'Critical', 'High', 'Medium', 'Low')")
-            ->orderBy('cases.updated_at', 'desc')
+            ->where('counselor_id', $counselor->id)
+            ->whereIn('student_id', $studentIds)
             ->get()
-            ->toArray();
+            ->map(function ($case) use ($names) {
+                $student = $names[(int) $case->student_id] ?? null;
+
+                $decorated = clone $case;
+                $decorated->first_name = $student->first_name ?? null;
+                $decorated->last_name = $student->last_name ?? null;
+                $decorated->student_number = $student->student_number ?? null;
+
+                return $decorated;
+            })
+            ->sort(function ($a, $b) use ($priorityRank) {
+                $cmp = ($priorityRank[(string) $a->priority] ?? 9)
+                    <=> ($priorityRank[(string) $b->priority] ?? 9);
+
+                if ($cmp !== 0) {
+                    return $cmp;
+                }
+
+                return strcmp((string) $b->updated_at, (string) $a->updated_at);
+            })
+            ->values()
+            ->all();
     }
 }

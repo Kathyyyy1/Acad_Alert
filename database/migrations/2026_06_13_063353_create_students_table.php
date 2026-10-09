@@ -19,7 +19,6 @@ return new class extends Migration
             $table->year('year_enrolled');
             $table->timestamps();
             
-            // Indexes for performance (1,600 students)
             $table->index('student_number');
             $table->index('email');
             $table->index('block_id');

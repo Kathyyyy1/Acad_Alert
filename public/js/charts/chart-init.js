@@ -1,19 +1,12 @@
-// ========================================
-// ACADALERT - Chart.js Initialization
-// Step 18: Frontend Integration
-// ========================================
 
 console.log('[Chart Init] Starting chart initialization...');
 
-// Wait for DOM to be fully loaded
 document.addEventListener('DOMContentLoaded', function() {
     console.log('[Chart Init] DOM loaded, initializing charts...');
     
-    // Determine which charts to load based on current page
     const currentRoute = window.location.pathname;
     console.log('[Chart Init] Current route:', currentRoute);
     
-    // Admin Dashboard Charts
     if (currentRoute.includes('/admin/dashboard')) {
         console.log('[Chart Init] Loading Admin Charts...');
         if (typeof loadAdminCharts === 'function') {
@@ -23,18 +16,16 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
-    // Master Teacher Department Dashboard
-    if (currentRoute.includes('/teacher/department')) {
-        console.log('[Chart Init] Loading Teacher Department Charts...');
-        if (typeof loadTeacherCharts === 'function') {
-            loadTeacherCharts();
+    if (currentRoute.includes('/academic-head/department')) {
+        console.log('[Chart Init] Loading Academic Head Department Charts...');
+        if (typeof loadAcademicHeadCharts === 'function') {
+            loadAcademicHeadCharts();
         } else {
-            console.warn('[Chart Init] loadTeacherCharts function not found');
+            console.warn('[Chart Init] loadAcademicHeadCharts function not found');
         }
     }
     
-    // Master Teacher Block Dashboard
-    if (currentRoute.includes('/teacher/block')) {
+    if (currentRoute.includes('/academic-head/block')) {
         console.log('[Chart Init] Loading Block Risk Chart...');
         if (typeof loadBlockRiskChart === 'function') {
             loadBlockRiskChart();
@@ -43,7 +34,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
-    // Counselor Dashboard
     if (currentRoute.includes('/counselor/dashboard') || currentRoute.includes('/counselor/cases')) {
         console.log('[Chart Init] Loading Counselor Charts...');
         if (typeof loadCounselorCharts === 'function') {
@@ -53,7 +43,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
-    // Counselor Case View
     if (currentRoute.includes('/counselor/case')) {
         console.log('[Chart Init] Loading Student Risk Trend Chart...');
         if (typeof loadStudentRiskTrend === 'function') {
@@ -63,7 +52,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
-    // Student Dashboard
     if (currentRoute.includes('/student/dashboard')) {
         console.log('[Chart Init] Loading Student Charts...');
         if (typeof loadStudentCharts === 'function') {
@@ -74,9 +62,6 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-// ========================================
-// Global Error Handler for Charts
-// ========================================
 
 window.addEventListener('error', function(e) {
     if (e.message && e.message.includes('Chart')) {
@@ -85,5 +70,4 @@ window.addEventListener('error', function(e) {
     }
 });
 
-// Log chart initialization status
 console.log('[Chart Init] Chart initialization complete.');

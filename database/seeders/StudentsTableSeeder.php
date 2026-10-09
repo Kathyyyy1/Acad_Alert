@@ -9,7 +9,6 @@ use Illuminate\Support\Facades\Schema;
 
 class StudentsTableSeeder extends Seeder
 {
-    // Filipino names dataset
     private $lastNames = [
         'Santos', 'Reyes', 'Cruz', 'Garcia', 'Mendoza', 'Flores', 'Villanueva', 
         'Gonzales', 'Rivera', 'Torres', 'Ramos', 'Gomez', 'Fernandez', 'Lopez', 
@@ -38,7 +37,6 @@ class StudentsTableSeeder extends Seeder
     {
         Schema::disableForeignKeyConstraints();
         DB::table('students')->truncate();
-        // Remove existing student users to avoid duplicates
         DB::table('users')->where('role', 'student')->delete();
         Schema::enableForeignKeyConstraints();
         
@@ -50,24 +48,20 @@ class StudentsTableSeeder extends Seeder
         $usedStudentNumbers = [];
         
         foreach ($blocks as $index => $block) {
-            // Get year level to determine enrolled year
             $yearLevel = DB::table('year_levels')->where('id', $block->year_level_id)->first();
             $yearIndex = $yearLevel->year_number - 1;
             $enrolledYear = $yearEnrolled[$yearIndex];
             
-            // Get program for student number format
             $program = DB::table('programs')->where('id', $yearLevel->program_id)->first();
             $blockLetter = chr(64 + $block->block_number);
             
             for ($i = 1; $i <= 20; $i++) {
-                // Alternate male/female names
                 $isMale = ($i % 2 == 0);
                 $firstName = $isMale 
                     ? $this->firstNamesMale[array_rand($this->firstNamesMale)]
                     : $this->firstNamesFemale[array_rand($this->firstNamesFemale)];
                 $lastName = $this->lastNames[array_rand($this->lastNames)];
                 
-                // Generate unique email
                 $baseEmail = strtolower($firstName . '.' . $lastName . '@udd.edu.ph');
                 $email = $baseEmail;
                 $counter = 1;
@@ -78,7 +72,6 @@ class StudentsTableSeeder extends Seeder
                 }
                 $usedEmails[] = $email;
                 
-                // Generate unique student number
                 $studentNumber = sprintf("UDD-%d-%s-%d%s-%03d", 
                     $enrolledYear, 
                     $program->code, 
@@ -95,7 +88,6 @@ class StudentsTableSeeder extends Seeder
                 }
                 $usedStudentNumbers[] = $studentNumber;
                 
-                // Insert Student
                 DB::table('students')->insert([
                     'block_id' => $block->id,
                     'student_number' => $studentNumber,
@@ -108,13 +100,10 @@ class StudentsTableSeeder extends Seeder
                     'updated_at' => now(),
                 ]);
                 
-                // ============================================================
-                // INSERT USER ACCOUNT FOR STUDENT (Enables login)
-                // ============================================================
                 DB::table('users')->insert([
                     'name' => $firstName . ' ' . $lastName,
                     'email' => $email,
-                    'password' => Hash::make('password'),  // Default password: 'password'
+                    'password' => Hash::make('password'),
                     'role' => 'student',
                     'is_active' => true,
                     'created_at' => now(),

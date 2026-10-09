@@ -39,7 +39,7 @@ class PaymentsTableSeeder extends Seeder
                 'due_date' => $dueDate,
                 'last_payment_date' => $paidAmount > 0 ? now() : null,
                 'status' => $status,
-                'updated_by' => 1, // Admin user
+                'updated_by' => 1,
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);

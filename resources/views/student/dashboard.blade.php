@@ -1,6 +1,6 @@
 @extends('layouts.app')
 
-@section('title', 'Student Dashboard - AcadAlert')
+@section('title', 'My Dashboard - AcadAlert')
 
 @section('page_title', 'My Academic Standing')
 @section('page_actions')
@@ -12,7 +12,6 @@
             <select class="form-select form-select-sm d-inline-block" id="periodSelect" style="width: auto; display: inline-block;">
                 <option value="Prelim" {{ $currentPeriod == 'Prelim' ? 'selected' : '' }}>Prelim</option>
                 <option value="Midterm" {{ $currentPeriod == 'Midterm' ? 'selected' : '' }}>Midterm</option>
-                <option value="Semifinal" {{ $currentPeriod == 'Semifinal' ? 'selected' : '' }}>Semifinal</option>
                 <option value="Finals" {{ $currentPeriod == 'Finals' ? 'selected' : '' }}>Finals</option>
             </select>
         </div>
@@ -23,555 +22,419 @@
 @endsection
 
 @section('content')
-<!-- Risk Score Card & Risk Trend -->
-<div class="row">
-    <div class="col-lg-4 mb-4">
-        <div class="card">
-            <div class="card-header bg-primary text-white text-center">
-                <i class="fas fa-shield-alt me-2"></i> Your Risk Score
-            </div>
-            <div class="card-body text-center py-4">
-                @if($currentRisk && $currentRisk->risk_score > 0)
-                    @php
-                        $score = $currentRisk->risk_score ?? 0;
-                        $level = $currentRisk->risk_level ?? 'No Data';
-                        $levelClass = match($level) {
-                            'High' => 'badge-risk-high',
-                            'Moderate' => 'badge-risk-moderate',
-                            default => 'badge-risk-low'
-                        };
-                        $icon = match($level) {
-                            'High' => 'fa-exclamation-triangle text-danger',
-                            'Moderate' => 'fa-clock text-warning',
-                            default => 'fa-check-circle text-success'
-                        };
-                    @endphp
-                    <div class="display-1 mb-2">
-                        <i class="fas {{ $icon }}"></i>
-                    </div>
-                    <div class="display-4 fw-bold">{{ $score }}</div>
-                    <div class="mt-2">
-                        <span class="badge {{ $levelClass }} p-2 fs-6">
-                            {{ $level }} RISK
-                        </span>
-                    </div>
-                @else
-                    <div class="display-1 mb-2">
-                        <i class="fas fa-info-circle text-muted"></i>
-                    </div>
-                    <div class="display-6 fw-bold text-muted">No Data</div>
-                    <div class="mt-2">
-                        <span class="badge bg-secondary p-2 fs-6">
-                            Pending Assessment
-                        </span>
-                    </div>
-                    <p class="text-muted small mt-3">
-                        <i class="fas fa-info-circle me-1"></i>
-                        Your risk score will be calculated after grades and attendance are recorded.
-                    </p>
-                @endif
-                <div class="mt-3 text-muted small">
-                    <i class="fas fa-info-circle me-1"></i>
-                    Score is calculated from grades (60%) and attendance (40%)
-                </div>
-            </div>
-        </div>
+@php
+    $score = $currentRisk->risk_score ?? null;
+    $level = $currentRisk->risk_level ?? 'No Data';
+
+    $levelClass = match ($level) {
+        'High' => 'badge-risk-high',
+        'Moderate' => 'badge-risk-moderate',
+        'Low' => 'badge-risk-low',
+        default => 'bg-secondary',
+    };
+
+    $trendMap = [
+        'improving' => ['label' => 'Improving', 'class' => 'bg-success', 'icon' => 'fa-arrow-down'],
+        'stable' => ['label' => 'Stable', 'class' => 'bg-secondary', 'icon' => 'fa-minus'],
+        'worsening' => ['label' => 'Worsening', 'class' => 'bg-danger', 'icon' => 'fa-arrow-up'],
+    ];
+    $trend = $trendMap[$riskTrend['overall'] ?? 'unknown']
+        ?? ['label' => 'No Trend', 'class' => 'bg-light text-dark border', 'icon' => 'fa-question'];
+
+    $levelTone = match ($level) {
+        'High' => 'danger',
+        'Moderate' => 'warning',
+        'Low' => 'success',
+        default => 'secondary',
+    };
+
+    // The greeting's first name. The student record is authoritative; the account
+    // name is the fallback, so the line is never empty.
+    $firstName = trim((string) ($studentInfo->first_name ?? ''));
+    if ($firstName === '') {
+        $firstName = explode(' ', trim((string) auth()->user()->name))[0] ?: 'Student';
+    }
+@endphp
+
+<div class="ah-page sp-page" style="--ah-photo: url('{{ asset('images/backgrounds/maincampus02.webp') }}')">
+
+<div class="sp-welcome ah-reveal" style="--ah-i: 0;">
+    <div class="sp-welcome-icon" aria-hidden="true">
+        <i class="fas fa-graduation-cap"></i>
     </div>
-    
-    <div class="col-lg-8 mb-4">
-        <div class="card">
-            <div class="card-header bg-success text-white">
-                <i class="fas fa-chart-line me-2"></i> Your Risk Trend & Progress
+    <div class="sp-welcome-body">
+        <h2 class="sp-welcome-title">Welcome back, {{ $firstName }}</h2>
+        <p class="sp-welcome-sub">
+            Here is your academic standing for
+            <strong>{{ $currentPeriod }} {{ $schoolYear }}</strong>.
+        </p>
+    </div>
+</div>
+
+<div class="row ah-reveal" style="--ah-i: 1;">
+    <div class="col-lg-5 mb-4">
+        <div class="card h-100 ah-glow border-{{ $levelTone }}">
+            <div class="card-header">
+                <i class="fas fa-shield-alt text-primary"></i> Risk Status
+                <span class="badge bg-primary ms-2">{{ $currentPeriod }} {{ $schoolYear }}</span>
             </div>
             <div class="card-body">
-                <div class="chart-container" style="height: 200px;">
-                    <canvas id="studentRiskTrendChart"></canvas>
-                </div>
-                <div class="mt-3">
-                    @if($improvement !== null && $improvement > 0)
-                        <div class="alert alert-success mb-0">
-                            <i class="fas fa-arrow-up me-2"></i>
-                            You are improving! Your risk dropped from 
-                            <strong>{{ $previousRisk->risk_score ?? 'N/A' }}</strong> to 
-                            <strong>{{ $currentRisk->risk_score ?? 'N/A' }}</strong>
-                            <span class="badge bg-success ms-2">-{{ $improvement }} points</span>
-                        </div>
-                    @elseif($improvement !== null && $improvement < 0)
-                        <div class="alert alert-danger mb-0">
-                            <i class="fas fa-arrow-down me-2"></i>
-                            Your risk increased from 
-                            <strong>{{ $previousRisk->risk_score ?? 'N/A' }}</strong> to 
-                            <strong>{{ $currentRisk->risk_score ?? 'N/A' }}</strong>
-                            <span class="badge bg-danger ms-2">+{{ abs($improvement) }} points</span>
-                        </div>
-                    @elseif($improvement === null)
-                        <div class="alert alert-info mb-0">
-                            <i class="fas fa-info-circle me-2"></i>
-                            Not enough data to show progress trend.
-                            <small class="d-block text-muted">Complete at least two grading periods to see improvement.</small>
-                        </div>
+                <div class="sp-score">
+                    @if($score !== null && $score > 0)
+                        <div class="display-4 fw-bold">{{ $score }}</div>
+                        <span class="badge {{ $levelClass }} p-2 fs-6">{{ strtoupper($level) }} RISK</span>
                     @else
-                        <div class="alert alert-secondary mb-0">
-                            <i class="fas fa-minus me-2"></i>
-                            Your risk score is stable at <strong>{{ $currentRisk->risk_score ?? 'N/A' }}</strong>
-                            <span class="badge bg-secondary ms-2">Stable</span>
+                        <div class="display-5 fw-bold text-muted">—</div>
+                        <span class="badge bg-secondary p-2 fs-6">Pending Assessment</span>
+                    @endif
+                </div>
+
+                <div class="sp-trend text-center">
+                    <span class="badge {{ $trend['class'] }} p-2">
+                        <i class="fas {{ $trend['icon'] }} me-1"></i>{{ $trend['label'] }}
+                    </span>
+                    @if(!is_null($riskTrend['delta']))
+                        <div class="small text-muted mt-1">
+                            {{ $riskTrend['delta'] > 0 ? '+' : '' }}{{ $riskTrend['delta'] }} points vs previous period
                         </div>
                     @endif
                 </div>
-            </div>
-        </div>
-    </div>
-</div>
 
-<!-- Subject Performance -->
-<div class="row">
-    <div class="col-lg-6 mb-4">
-        <div class="card">
-            <div class="card-header">
-                <i class="fas fa-book text-primary me-2"></i> Subject Performance
-            </div>
-            <div class="card-body">
-                <div class="chart-container" style="height: 200px;">
-                    <canvas id="subjectGradesChart"></canvas>
-                </div>
-                <div class="mt-3">
-                    @php
-                        $lowestGrade = $subjectGrades->sortBy('numerical_grade')->first();
-                    @endphp
-                    @if($lowestGrade && $lowestGrade->numerical_grade < 75)
-                        <div class="alert alert-warning mb-0">
-                            <i class="fas fa-exclamation-circle me-2"></i>
-                            Focus on: <strong>{{ $lowestGrade->subject_name }}</strong> ({{ $lowestGrade->numerical_grade }}% - Failing)
+                <div class="sp-factors">
+                    <div class="text-muted small text-uppercase mb-2">Risk Factors</div>
+                    @forelse($riskFactors as $factor)
+                        <div class="small mb-1 sp-factor">
+                            <i class="fas fa-circle-exclamation text-warning me-2"></i>{{ $factor }}
                         </div>
-                    @else
-                        <div class="alert alert-success mb-0">
-                            <i class="fas fa-check-circle me-2"></i>
-                            You are passing all subjects. Keep up the good work!
-                        </div>
-                    @endif
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Attendance Breakdown -->
-    <div class="col-lg-6 mb-4">
-        <div class="card">
-            <div class="card-header">
-                <i class="fas fa-clipboard-check text-primary me-2"></i> Attendance Breakdown
-            </div>
-            <div class="card-body">
-                <div class="table-responsive">
-                    <table class="table table-sm">
-                        <thead>
-                            <tr>
-                                <th>Subject</th>
-                                <th>Attendance</th>
-                                <th>Status</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @forelse($attendanceBreakdown as $att)
-                            <tr>
-                                <td>{{ $att->subject_name }}</td>
-                                <td>
-                                    <span class="{{ $att->attendance_rate < 70 ? 'text-danger fw-bold' : ($att->attendance_rate < 80 ? 'text-warning' : '') }}">
-                                        {{ round($att->attendance_rate) }}%
-                                    </span>
-                                </td>
-                                <td>
-                                    @if($att->attendance_rate < 70)
-                                        <span class="badge bg-danger">At risk</span>
-                                    @elseif($att->attendance_rate < 80)
-                                        <span class="badge bg-warning">Below 80%</span>
-                                    @elseif($att->attendance_rate < 90)
-                                        <span class="badge bg-info">Good</span>
-                                    @else
-                                        <span class="badge bg-success">Excellent</span>
-                                    @endif
-                                </td>
-                            </tr>
-                            @empty
-                            <tr>
-                                <td colspan="3" class="text-center text-muted">No attendance data available.</td>
-                            </tr>
-                            @endforelse
-                        </tbody>
-                    </table>
-                </div>
-                @php
-                    $lowestAttendance = $attendanceBreakdown->sortBy('attendance_rate')->first();
-                @endphp
-                @if($lowestAttendance && $lowestAttendance->attendance_rate < 75)
-                    <div class="alert alert-danger mb-0 mt-2">
-                        <i class="fas fa-exclamation-triangle me-2"></i>
-                        You have <strong>{{ round(100 - $lowestAttendance->attendance_rate) }}% absences</strong> in <strong>{{ $lowestAttendance->subject_name }}</strong>.
-                        <br>
-                        <small>Please see your instructor to discuss your attendance.</small>
-                    </div>
-                @endif
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Alerts -->
-<div class="row">
-    <div class="col-12 mb-4">
-        <div class="card border-{{ $unreadAlerts > 0 ? 'danger' : 'success' }}">
-            <div class="card-header bg-{{ $unreadAlerts > 0 ? 'danger' : 'success' }} text-white">
-                <i class="fas fa-bell me-2"></i> Your Alerts
-                @if($unreadAlerts > 0)
-                    <span class="badge bg-light text-danger ms-2">{{ $unreadAlerts }} unread</span>
-                @endif
-                <!-- Debug: Show count -->
-                <span class="badge bg-light text-secondary ms-2" style="font-size: 0.6rem;">
-                    Total: {{ $alerts->count() }}
-                </span>
-            </div>
-            <div class="card-body">
-                @if($alerts->count() > 0)
-                    @foreach($alerts as $alert)
-                        @php
-                            // Determine alert type
-                            $alertType = match($alert->severity) {
-                                'critical' => 'danger',
-                                'high' => 'warning',
-                                'medium' => 'info',
-                                'low' => 'secondary',
-                                'success' => 'success',
-                                default => 'info'
-                            };
-                            // Check if this is a counselor alert
-                            $isCounselorAlert = in_array($alert->flag_type, [
-                                'counselor_update', 'counselor_action', 'status_update', 
-                                'priority_update', 'case_resolved', 'case_reopened'
-                            ]);
-                        @endphp
-                        <div class="alert alert-{{ $alertType }} d-flex justify-content-between align-items-center mb-2" id="alert-{{ $alert->id }}">
-                            <div>
-                                @if(!$alert->is_acknowledged)
-                                    <span class="badge bg-danger me-2">NEW</span>
-                                @endif
-                                @if($isCounselorAlert)
-                                    <i class="fas fa-headset me-2 text-primary"></i>
-                                    <span class="fw-bold">[Counselor]</span>
-                                @endif
-                                {{ $alert->message ?? $alert->flag_type }}
-                                @if($alert->consecutive_periods_count > 1)
-                                    <span class="badge bg-danger ms-2">x{{ $alert->consecutive_periods_count }} consecutive</span>
-                                @endif
-                                <br>
-                                <small class="text-muted">{{ $alert->grading_period }} {{ $alert->school_year }}</small>
-                                @if($alert->created_at)
-                                    <small class="text-muted ms-2">| {{ \Carbon\Carbon::parse($alert->created_at)->diffForHumans() }}</small>
-                                @endif
-                            </div>
-                            <div class="alert-actions">
-                                @if(!$alert->is_acknowledged)
-                                    <button class="btn btn-sm btn-outline-primary acknowledge-btn" 
-                                            data-alert-id="{{ $alert->id }}"
-                                            onclick="acknowledgeAlert({{ $alert->id }}, this)">
-                                        <i class="fas fa-check me-1"></i> Mark as Read
-                                    </button>
-                                @else
-                                    <span class="badge bg-success"><i class="fas fa-check me-1"></i> Read</span>
-                                @endif
-                            </div>
-                        </div>
-                    @endforeach
-                @else
-                    <p class="text-muted mb-0">
-                        <i class="fas fa-check-circle text-success me-2"></i> 
-                        No new alerts at this time.
-                    </p>
-                @endif
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Recommendations & Resources -->
-<div class="row">
-    <div class="col-md-6 mb-4">
-        <div class="card">
-            <div class="card-header">
-                <i class=""></i> Recommended Resources
-            </div>
-            <div class="card-body">
-                <div class="list-group">
-                    @forelse($resources as $resource)
-                    <div class="list-group-item">
-                        <i class="{{ $resource['icon'] }} me-2 text-primary"></i>
-                        <strong>{{ $resource['title'] }}</strong>
-                        <br>
-                        <small class="text-muted">{{ $resource['description'] }}</small>
-                    </div>
                     @empty
-                    <div class="list-group-item text-muted">
-                        No resources available at this time.
-                    </div>
+                        <div class="small text-muted">
+                            No risk factors recorded for {{ $currentPeriod }}.
+                        </div>
                     @endforelse
                 </div>
             </div>
         </div>
     </div>
-    
-    <div class="col-md-6 mb-4">
-        <div class="card">
+
+    <div class="col-lg-7 mb-4">
+        <div class="card h-100 ah-glow">
             <div class="card-header">
-                <i class="fas fa-headset text-primary me-2"></i> Contact Your Counselor
+                <i class="fas fa-chart-line text-primary"></i> Risk Trend
+                <small class="text-muted ms-2">score by grading period</small>
             </div>
             <div class="card-body">
-                @if($counselorInfo)
-                <div class="text-center">
-                    <div class="display-6 mb-2">
-                        <i class="fas fa-user-circle text-primary"></i>
+
+                {{-- CHANGED: Let the shared responsive chart stage control height. --}}
+                <div class="chart-container">
+                    <canvas id="studentRiskTrendChart"></canvas>
+                </div>
+
+                @if(count($riskTrend['rows']) > 0)
+                    <div class="table-responsive mt-3">
+                        <table class="table table-sm mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Period</th>
+                                    <th>Score</th>
+                                    <th>Level</th>
+                                    <th>Trend</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach($riskTrend['rows'] as $row)
+                                    <tr>
+                                        <td>{{ $row['period'] }}</td>
+                                        <td class="fw-semibold">{{ $row['score'] }}</td>
+                                        <td>
+                                            <span class="badge {{ match($row['level']) {
+                                                'High' => 'badge-risk-high',
+                                                'Moderate' => 'badge-risk-moderate',
+                                                'Low' => 'badge-risk-low',
+                                                default => 'bg-secondary',
+                                            } }}">{{ $row['level'] }}</span>
+                                        </td>
+                                        <td>
+                                            @php $rowTrend = $trendMap[$row['trend']] ?? null; @endphp
+                                            @if($rowTrend)
+                                                <span class="badge {{ $rowTrend['class'] }}">{{ $rowTrend['label'] }}</span>
+                                            @endif
+                                            @if(!is_null($row['delta']))
+                                                <small class="text-muted ms-1">
+                                                    {{ $row['delta'] > 0 ? '+' : '' }}{{ $row['delta'] }}
+                                                </small>
+                                            @endif
+                                        </td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
                     </div>
-                    <h5>{{ $counselorInfo->name }}</h5>
-                    <p class="text-muted small">
-                        <i class="fas fa-map-pin me-1"></i> 
-                        {{ $counselorInfo->office_location ?? 'Guidance Office, 2nd Floor, Main Building' }}
-                    </p>
-                    <p class="text-muted small">
-                        <i class="fas fa-phone me-1"></i> 
-                        {{ $counselorInfo->phone_number ?? '(075) 123-4567 loc. 123' }}
-                    </p>
-                    <p class="text-muted small">
-                        <i class="fas fa-envelope me-1"></i> 
-                        {{ $counselorInfo->email }}
-                    </p>
-                    <p class="text-muted small">
-                        <i class="fas fa-clock me-1"></i> 
-                        {{ $counselorInfo->office_hours ?? 'Mon-Fri, 9:00 AM - 4:00 PM' }}
-                    </p>
-                    <button class="btn btn-primary mt-2" onclick="scheduleAppointment()">
-                        <i class="fas fa-calendar-plus me-1"></i> Schedule an Appointment
-                    </button>
+                @endif
+
+                <div class="small text-muted mt-2">
+                    <i class="fas fa-info-circle me-1"></i>
+                    Score is calculated from grades (60%) and attendance (40%).
                 </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row ah-reveal" style="--ah-i: 2;">
+    <div class="col-lg-7 mb-4">
+        <div class="card h-100 ah-glow">
+            <div class="card-header">
+                <i class="fas fa-book text-primary"></i> Grades Summary
+                <span class="badge bg-primary ms-2">{{ $currentPeriod }} {{ $schoolYear }}</span>
+                <a href="{{ route('student.grades', ['period' => $currentPeriod]) }}"
+                   class="btn btn-sm btn-outline-primary float-end">Full grades</a>
+            </div>
+            <div class="card-body">
+                <div class="row text-center mb-3 sp-metrics">
+                    <div class="col-4">
+                        <div class="text-muted small text-uppercase">Average</div>
+                        <div class="fw-bold fs-4 {{ $gradeSummary['average'] === null ? 'text-muted' : ($gradeSummary['average'] < 75 ? 'text-danger' : ($gradeSummary['average'] < 80 ? 'text-warning' : 'text-success')) }}">
+                            {{ $gradeSummary['average'] === null ? '—' : $gradeSummary['average'] . '%' }}
+                        </div>
+                    </div>
+                    <div class="col-4">
+                        <div class="text-muted small text-uppercase">Subjects</div>
+                        <div class="fw-bold fs-4">{{ $gradeSummary['total'] }}</div>
+                    </div>
+                    <div class="col-4">
+                        <div class="text-muted small text-uppercase">Failing</div>
+                        <div class="fw-bold fs-4 {{ $gradeSummary['failing'] > 0 ? 'text-danger' : 'text-success' }}">
+                            {{ $gradeSummary['failing'] }}
+                        </div>
+                    </div>
+                </div>
+
+                @if($gradeSummary['failing'] > 0)
+                    <div class="alert alert-permanent alert-danger py-2 small mb-3">
+                        <i class="fas fa-exclamation-triangle me-1"></i>
+                        You have <strong>{{ $gradeSummary['failing'] }}</strong> failing subject(s).
+                        Please see your instructor.
+                    </div>
+                @endif
+
+                {{-- CHANGED: Keep the grade chart sizing consistent across breakpoints. --}}
+                <div class="chart-container">
+                    <canvas id="subjectGradesChart"></canvas>
+                </div>
+
+                <div class="table-responsive mt-3" style="max-height: 260px; overflow-y: auto;">
+                    <table class="table table-sm mb-0">
+                        <thead>
+                            <tr>
+                                <th>Subject</th>
+                                <th>Score</th>
+                                <th>Grade</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @forelse($subjectGrades as $grade)
+                                <tr>
+                                    <td>
+                                        <span class="badge bg-secondary">{{ $grade->subject_code }}</span>
+                                        <div class="small text-muted">{{ $grade->subject_name }}</div>
+                                    </td>
+                                    <td class="{{ $grade->numerical_grade < 75 ? 'text-danger fw-bold' : ($grade->numerical_grade < 80 ? 'text-warning' : '') }}">
+                                        {{ round($grade->numerical_grade, 2) }}%
+                                    </td>
+                                    <td>{{ $grade->letter_grade ?? '—' }}</td>
+                                    <td>
+                                        @if($grade->numerical_grade < 75)
+                                            <span class="badge bg-danger">Failing</span>
+                                        @elseif($grade->numerical_grade < 80)
+                                            <span class="badge bg-warning">At Risk</span>
+                                        @else
+                                            <span class="badge bg-success">Passing</span>
+                                        @endif
+                                    </td>
+                                </tr>
+                            @empty
+                                <tr>
+                                    <td colspan="4" class="text-center text-muted py-3">
+                                        No grades available for this period.
+                                    </td>
+                                </tr>
+                            @endforelse
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-5 mb-4">
+        <div class="card h-100 ah-glow">
+            <div class="card-header">
+                <i class="fas fa-clipboard-check text-primary"></i> Attendance Summary
+                <span class="badge bg-primary ms-2">{{ $currentPeriod }}</span>
+                <a href="{{ route('student.attendance', ['period' => $currentPeriod]) }}"
+                   class="btn btn-sm btn-outline-primary float-end">Full attendance</a>
+            </div>
+            <div class="card-body">
+                @php
+                    $attendanceRate = (float) ($attendanceSummary->overall_attendance ?? 0);
+                @endphp
+
+                <div class="sp-rate text-center mb-3">
+                    <div class="display-6 fw-bold {{ $attendanceRate < 75 ? 'text-danger' : ($attendanceRate < 85 ? 'text-warning' : 'text-success') }}">
+                        {{ round($attendanceRate) }}%
+                    </div>
+                    <div class="text-muted small text-uppercase">Overall Attendance</div>
+                </div>
+
+                <div class="d-flex justify-content-between border-bottom py-2">
+                    <span class="text-muted">
+                        <i class="fas fa-times-circle text-danger me-2"></i>Total Absences
+                    </span>
+                    <span class="fw-bold">{{ $attendanceSummary->total_absences ?? 0 }}</span>
+                </div>
+                <div class="d-flex justify-content-between border-bottom py-2">
+                    <span class="text-muted">
+                        <i class="fas fa-clock text-warning me-2"></i>Total Lates
+                    </span>
+                    <span class="fw-bold">{{ $attendanceSummary->total_lates ?? 0 }}</span>
+                </div>
+                <div class="d-flex justify-content-between py-2">
+                    <span class="text-muted">
+                        <i class="fas fa-check-circle text-success me-2"></i>Total Excused
+                    </span>
+                    <span class="fw-bold">{{ $attendanceSummary->total_excused ?? 0 }}</span>
+                </div>
+
+                @if($attendanceRate > 0 && $attendanceRate < 75)
+                    <div class="alert alert-permanent alert-danger py-2 small mb-0 mt-2">
+                        <i class="fas fa-exclamation-triangle me-1"></i>
+                        Your attendance is below the required threshold.
+                        <a href="{{ route('student.counselor') }}" class="alert-link">Contact your counselor</a>.
+                    </div>
+                @endif
+
+                @if($attendanceBreakdown->count() > 0)
+                    <div class="table-responsive mt-3" style="max-height: 200px; overflow-y: auto;">
+                        <table class="table table-sm mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Subject</th>
+                                    <th>Rate</th>
+                                    <th>Absences</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach($attendanceBreakdown as $attendance)
+                                    <tr>
+                                        <td>
+                                            <span class="badge bg-secondary">{{ $attendance->subject_code }}</span>
+                                            <div class="small text-muted">{{ $attendance->subject_name }}</div>
+                                        </td>
+                                        <td class="{{ $attendance->attendance_rate < 75 ? 'text-danger fw-bold' : ($attendance->attendance_rate < 80 ? 'text-warning' : 'text-success') }}">
+                                            {{ round($attendance->attendance_rate) }}%
+                                        </td>
+                                        <td>{{ $attendance->total_absences ?? 0 }}</td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    </div>
+                @endif
+            </div>
+        </div>
+    </div>
+</div>
+<div class="row ah-reveal" style="--ah-i: 3;">
+    <div class="col-12 mb-4">
+        <div class="card ah-glow">
+            <div class="card-header">
+                <i class="fas fa-list-check text-primary"></i> Intervention Recommendations
+                <span class="badge bg-light text-primary ms-2">{{ $recommendations->count() }}</span>
+                <a href="{{ route('student.recommendations') }}" class="btn btn-sm btn-light float-end">
+                    <i class="fas fa-list-check me-1"></i> Manage recommendations
+                </a>
+            </div>
+            <div class="card-body">
+                @if($recommendations->count() > 0)
+                    <div class="list-group">
+                        @foreach($recommendations as $recommendation)
+                            <div class="list-group-item {{ $recommendation->is_completed ? 'list-group-item-success' : '' }}">
+                                <div class="d-flex align-items-center mb-2 flex-wrap">
+                                    <span class="badge {{ $recommendation->is_completed ? 'bg-success' : 'bg-warning text-dark' }} me-2">
+                                        <i class="fas {{ $recommendation->is_completed ? 'fa-check' : 'fa-hourglass-half' }} me-1"></i>
+                                        {{ $recommendation->is_completed ? 'Completed' : 'Not Completed' }}
+                                    </span>
+                                    @if(!empty($recommendation->grading_period))
+                                        <span class="badge bg-info text-dark me-2">{{ $recommendation->grading_period }}</span>
+                                    @endif
+                                    @if(!empty($recommendation->generated_at))
+                                        <small class="text-muted">
+                                            Generated {{ \Carbon\Carbon::parse($recommendation->generated_at)->format('M j, Y') }}
+                                        </small>
+                                    @endif
+                                </div>
+
+                                @if(!empty($recommendation->risk_factors_list))
+                                    <div class="mb-2">
+                                        <strong class="small">Risk Factors:</strong>
+                                        @foreach($recommendation->risk_factors_list as $factor)
+                                            <span class="badge bg-secondary">{{ $factor }}</span>
+                                        @endforeach
+                                    </div>
+                                @endif
+
+                                @if(!empty($recommendation->suggested_actions_list))
+                                    <div>
+                                        <strong class="small">Recommended Actions:</strong>
+                                        <ul class="mb-0 mt-1">
+                                            @foreach($recommendation->suggested_actions_list as $action)
+                                                <li>
+                                                    @if(!empty($action['priority']))
+                                                        <span class="badge bg-{{ $action['priority'] === 'high' ? 'danger' : ($action['priority'] === 'medium' ? 'warning' : 'info') }}">
+                                                            {{ $action['priority'] }}
+                                                        </span>
+                                                    @endif
+                                                    <strong>{{ ucfirst(str_replace('_', ' ', $action['action'] ?? 'Action')) }}</strong>
+                                                    @if(!empty($action['details']))
+                                                        <span class="text-muted">— {{ $action['details'] }}</span>
+                                                    @endif
+                                                </li>
+                                            @endforeach
+                                        </ul>
+                                    </div>
+                                @endif
+                            </div>
+                        @endforeach
+                    </div>
                 @else
-                <div class="text-center text-muted py-3">
-                    <i class="fas fa-info-circle fa-2x d-block mb-2"></i>
-                    <p>No counselor assigned to your department yet.</p>
-                </div>
+                    <div class="text-center text-muted py-4">
+                        <i class="fas fa-lightbulb fa-3x d-block mb-3 opacity-50"></i>
+                        <p class="mb-1">No intervention recommendation has been generated for you yet.</p>
+                        <small>
+                            Recommendations are generated by your Academic Head from your grades and
+                            attendance.
+                        </small>
+                    </div>
                 @endif
             </div>
         </div>
     </div>
 </div>
 
-<!-- Progress Comparison -->
-@if($progressComparison)
-<div class="row">
-    <div class="col-12 mb-4">
-        <div class="card">
-            <div class="card-header bg-info text-white">
-                <i class="fas fa-chart-simple me-2"></i> Progress Comparison
-            </div>
-            <div class="card-body">
-                <div class="row">
-                    <div class="col-md-6">
-                        <div class="bg-light p-3 rounded mb-2">
-                            <div class="text-muted small">Before Intervention</div>
-                            <div class="fw-bold text-danger">
-                                <i class="fas fa-exclamation-triangle me-1"></i> 
-                                {{ $progressComparison->first_score }} - {{ $progressComparison->first_level }}
-                                <br>
-                                <small class="text-muted">{{ $progressComparison->first_period }}</small>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="bg-light p-3 rounded mb-2">
-                            <div class="text-muted small">After Intervention</div>
-                            <div class="fw-bold {{ $progressComparison->improvement > 0 ? 'text-success' : 'text-warning' }}">
-                                @if($progressComparison->improvement > 0)
-                                    <i class="fas fa-arrow-up me-1"></i> 
-                                @elseif($progressComparison->improvement < 0)
-                                    <i class="fas fa-arrow-down me-1"></i> 
-                                @else
-                                    <i class="fas fa-minus me-1"></i>
-                                @endif
-                                {{ $progressComparison->last_score }} - {{ $progressComparison->last_level }}
-                                <br>
-                                <small class="text-muted">{{ $progressComparison->last_period }}</small>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                @if($progressComparison->improvement > 0)
-                <div class="alert alert-success mb-0">
-                    <i class="fas fa-check-circle me-2"></i> 
-                    Improvement: -{{ $progressComparison->improvement }} points Intervention Working!
-                </div>
-                @elseif($progressComparison->improvement < 0)
-                <div class="alert alert-danger mb-0">
-                    <i class="fas fa-exclamation-circle me-2"></i> 
-                    Worsening: +{{ abs($progressComparison->improvement) }} points Intervention needs review!
-                </div>
-                @else
-                <div class="alert alert-info mb-0">
-                    <i class="fas fa-info-circle me-2"></i> 
-                    No significant change detected. Continue monitoring.
-                </div>
-                @endif
-            </div>
-        </div>
-    </div>
 </div>
-@endif
 @endsection
 
 @push('scripts')
-<!-- ======================================== -->
-<!-- CHART.JS SCRIPTS - Step 17 & 18           -->
-<!-- ======================================== -->
-<!-- 
-    NOTE: All chart initialization is now handled by student-charts.js
-    The inline chart code has been removed to prevent duplicate initialization.
--->
-
-<!-- Period Selector Auto-Submit -->
-<script>
-    document.addEventListener('DOMContentLoaded', function() {
-        // Period Selector Auto-Submit
-        document.getElementById('periodSelect')?.addEventListener('change', function() {
-            const currentUrl = new URL(window.location.href);
-            currentUrl.searchParams.set('period', this.value);
-            window.location.href = currentUrl.toString();
-        });
-    });
-    
-    // ========================================
-    // Alert Acknowledgment - Fixed
-    // ========================================
-    function acknowledgeAlert(flagId, button) {
-        // Store reference to the button and its parent elements
-        const btn = button;
-        const alertDiv = btn.closest('.alert');
-        const actionsDiv = btn.closest('.alert-actions');
-        
-        // Disable the button to prevent double-clicks
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Processing...';
-        
-        fetch('/student/acknowledge-alert', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
-                'Accept': 'application/json',
-            },
-            body: JSON.stringify({
-                flag_id: flagId,
-            }),
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                // Replace the button with "Read" badge
-                if (actionsDiv) {
-                    actionsDiv.innerHTML = '<span class="badge bg-success"><i class="fas fa-check me-1"></i> Read</span>';
-                }
-                
-                // Update the alert style (optional)
-                if (alertDiv) {
-                    alertDiv.classList.remove('alert-warning', 'alert-info', 'alert-danger');
-                    alertDiv.classList.add('alert-success');
-                }
-                
-                // Update unread count
-                const countBadge = document.querySelector('.card-header .badge');
-                if (countBadge) {
-                    let count = parseInt(countBadge.textContent);
-                    if (count > 0) {
-                        count--;
-                        if (count > 0) {
-                            countBadge.textContent = count;
-                        } else {
-                            countBadge.remove();
-                        }
-                    }
-                }
-                
-                // Show a small toast or notification
-                showToast('Alert marked as read!', 'success');
-            } else {
-                // Show error message
-                showToast('❌ ' + data.message, 'error');
-                // Re-enable the button
-                btn.disabled = false;
-                btn.innerHTML = '<i class="fas fa-check me-1"></i> Mark as Read';
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            showToast('❌ Error: ' + error.message, 'error');
-            btn.disabled = false;
-            btn.innerHTML = '<i class="fas fa-check me-1"></i> Mark as Read';
-        });
-    }
-
-    // ========================================
-    // Toast Notification Helper
-    // ========================================
-    function showToast(message, type = 'success') {
-        const colors = {
-            success: 'bg-success text-white',
-            error: 'bg-danger text-white',
-            warning: 'bg-warning text-dark',
-            info: 'bg-info text-white'
-        };
-        
-        // Remove existing toasts
-        const existingToasts = document.querySelectorAll('.custom-toast');
-        existingToasts.forEach(toast => toast.remove());
-        
-        const toast = document.createElement('div');
-        toast.className = `custom-toast toast align-items-center ${colors[type] || colors.info} border-0 show`;
-        toast.role = 'alert';
-        toast.ariaLive = 'assertive';
-        toast.ariaAtomic = 'true';
-        toast.style.position = 'fixed';
-        toast.style.top = '80px';
-        toast.style.right = '20px';
-        toast.style.zIndex = '9999';
-        toast.style.minWidth = '300px';
-        toast.style.maxWidth = '450px';
-        toast.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
-        toast.style.borderRadius = '8px';
-        toast.innerHTML = `
-            <div class="d-flex">
-                <div class="toast-body">${message}</div>
-                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
-            </div>
-        `;
-        
-        document.body.appendChild(toast);
-        
-        // Auto-dismiss after 4 seconds
-        setTimeout(function() {
-            toast.classList.remove('show');
-            setTimeout(function() {
-                if (toast.parentNode) {
-                    toast.remove();
-                }
-            }, 300);
-        }, 4000);
-    }
-    
-    function scheduleAppointment() {
-        alert('Appointment scheduling will be available soon! (Placeholder)');
-    }
-</script>
-
-<!-- Chart.js Scripts -->
 <script src="{{ asset('js/charts/chart-config.js') }}"></script>
 <script src="{{ asset('js/charts/student-charts.js') }}"></script>
 
-<!-- Debugging -->
 <script>
-    console.log('[Student Dashboard] Chart scripts loaded.');
-    console.log('[Student Dashboard] Charts will be initialized by student-charts.js');
+    document.addEventListener('DOMContentLoaded', function () {
+        document.getElementById('periodSelect')?.addEventListener('change', function () {
+            const url = new URL(window.location.href);
+            url.searchParams.set('period', this.value);
+            window.location.href = url.toString();
+        });
+    });
 </script>
 @endpush

@@ -1,15 +1,24 @@
-// ========================================
-// ACADALERT - Admin Charts (Enhanced)
-// Step 18: Full Frontend Integration
-// ========================================
 
 console.log('[Admin Charts] Loading...');
 
-// Prevent multiple initializations
+function adminTrendPalette() {
+    const light = document.documentElement.getAttribute('data-bs-theme') === 'light';
+    return {
+        /* CHANGED: Reuse the OCEAN chart accent in both themes. */
+        line: window.COLORS.accent,
+        halo: 'rgba(41, 173, 178, 0.16)',
+        fillTop: 'rgba(41, 173, 178, 0.30)',
+        fillMid: 'rgba(41, 173, 178, 0.10)',
+        point: light ? '#ffffff' : '#0D1B2A',
+        pointRing: window.COLORS.accent,
+        grid: Chart.defaults.borderColor,
+        tick: Chart.defaults.color
+    };
+}
+
 let adminChartsLoaded = false;
 
 function loadAdminCharts() {
-    // Prevent duplicate loading
     if (adminChartsLoaded) {
         console.log('[Admin Charts] Already loaded, skipping...');
         return;
@@ -73,30 +82,32 @@ function loadRiskByDepartment() {
                         {
                             label: 'High Risk',
                             data: highRisk,
-                            backgroundColor: '#dc3545',
+                            backgroundColor: window.RISK_COLORS.high,
                             borderRadius: 4,
                         },
                         {
                             label: 'Moderate Risk',
                             data: moderateRisk,
-                            backgroundColor: '#ffc107',
+                            backgroundColor: window.RISK_COLORS.moderate,
                             borderRadius: 4,
                         },
                         {
                             label: 'Low Risk',
                             data: lowRisk,
-                            backgroundColor: '#28a745',
+                            backgroundColor: window.RISK_COLORS.low,
                             borderRadius: 4,
                         }
                     ]
                 },
                 options: {
                     responsive: true,
-                    maintainAspectRatio: true,
+                    /* CHANGED: Fit the responsive parent without stretching chart content. */
+                    maintainAspectRatio: false,
+                    datasets: { bar: { minBarLength: 2 } },
                     indexAxis: 'y',
                     plugins: {
                         legend: {
-                            position: 'top',
+                            position: 'bottom',
                             labels: {
                                 usePointStyle: true,
                                 padding: 20,
@@ -175,7 +186,8 @@ function loadRiskDistribution() {
                 data: data,
                 options: {
                     responsive: true,
-                    maintainAspectRatio: true,
+                    /* CHANGED: Keep doughnut geometry circular inside its chart stage. */
+                    maintainAspectRatio: false,
                     plugins: {
                         legend: {
                             position: 'bottom',
@@ -239,17 +251,77 @@ function loadRiskTrend() {
                 return;
             }
 
+            const series = data.datasets[0];
             const config = {
                 type: 'line',
-                data: data,
+                data: {
+                    labels: data.labels,
+                    datasets: [
+                        Object.assign({}, series, {
+                            borderColor: function () { return adminTrendPalette().halo; },
+                            borderWidth: 11,
+                            borderCapStyle: 'round',
+                            borderJoinStyle: 'round',
+                            cubicInterpolationMode: 'monotone',
+                            fill: false,
+                            pointRadius: 0,
+                            pointHoverRadius: 0
+                        }),
+                        Object.assign({}, series, {
+                            borderColor: function () { return adminTrendPalette().line; },
+                            borderWidth: 3,
+                            borderCapStyle: 'round',
+                            borderJoinStyle: 'round',
+                            cubicInterpolationMode: 'monotone',
+                            fill: true,
+                            backgroundColor: function (context) {
+                                const area = context.chart.chartArea;
+                                const palette = adminTrendPalette();
+                                if (!area) {
+                                    return palette.fillMid;
+                                }
+                                const gradient = context.chart.ctx.createLinearGradient(0, area.top, 0, area.bottom);
+                                gradient.addColorStop(0, palette.fillTop);
+                                gradient.addColorStop(0.62, palette.fillMid);
+                                gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                                return gradient;
+                            },
+                            pointStyle: 'rectRounded',
+                            pointRadius: 5.5,
+                            pointHoverRadius: 9,
+                            pointBorderWidth: 2,
+                            pointBorderColor: function () { return adminTrendPalette().pointRing; },
+                            pointBackgroundColor: function () { return adminTrendPalette().point; },
+                            pointHoverBorderColor: function () { return adminTrendPalette().pointRing; },
+                            pointHoverBackgroundColor: function () { return adminTrendPalette().point; }
+                        })
+                    ]
+                },
                 options: {
                     responsive: true,
-                    maintainAspectRatio: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false
+                    },
                     plugins: {
                         legend: {
                             display: false
                         },
                         tooltip: {
+                            // Only the plot answers the pointer; the halo is light, not data.
+                            filter: function (item) {
+                                return item.datasetIndex === 1;
+                            },
+                            backgroundColor: 'rgba(10, 16, 36, 0.94)',
+                            borderColor: 'rgba(96, 165, 250, 0.45)',
+                            borderWidth: 1,
+                            cornerRadius: 12,
+                            padding: 12,
+                            displayColors: false,
+                            titleColor: '#eaf1ff',
+                            bodyColor: '#dbe8ff',
+                            titleFont: { weight: '600' },
                             callbacks: {
                                 label: function(context) {
                                     return 'High Risk: ' + context.parsed.y + '%';
@@ -261,14 +333,34 @@ function loadRiskTrend() {
                         y: {
                             beginAtZero: true,
                             max: 100,
-                            grid: { color: 'rgba(0,0,0,0.05)' },
+                            border: { display: false },
+                            grid: {
+                                color: function () { return adminTrendPalette().grid; },
+                                drawTicks: false
+                            },
+                            ticks: {
+                                color: function () { return adminTrendPalette().tick; },
+                                padding: 10,
+                                maxTicksLimit: 6,
+                                callback: function(value) {
+                                    return value + '%';
+                                }
+                            },
                             title: {
                                 display: true,
-                                text: 'High Risk %'
+                                text: 'High Risk %',
+                                color: function () { return adminTrendPalette().tick; }
                             }
                         },
                         x: {
-                            grid: { display: false }
+                            border: { display: false },
+                            grid: { display: false },
+                            ticks: {
+                                color: function () { return adminTrendPalette().tick; },
+                                padding: 8,
+                                maxRotation: 0,
+                                autoSkipPadding: 16
+                            }
                         }
                     }
                 }
@@ -298,7 +390,6 @@ function showFallbackMessage(canvas, message) {
     }
 }
 
-// Load admin charts when DOM is ready - using a more reliable approach
 if (document.readyState === 'complete' || document.readyState === 'interactive') {
     // Small delay to ensure everything is rendered
     setTimeout(() => {

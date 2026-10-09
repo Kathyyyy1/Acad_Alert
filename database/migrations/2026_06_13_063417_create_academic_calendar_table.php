@@ -12,7 +12,7 @@ return new class extends Migration
             $table->id();
             $table->string('school_year', 9);
             $table->enum('semester', ['1st', '2nd']);
-            $table->enum('grading_period', ['Prelim', 'Midterm', 'Semifinal', 'Finals']);
+            $table->enum('grading_period', ['Prelim', 'Midterm', 'Finals']);
             $table->integer('period_number');
             $table->date('start_date');
             $table->date('end_date');

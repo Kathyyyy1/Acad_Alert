@@ -49,11 +49,10 @@ class LoginController extends Controller
     {
         $user = Auth::user();
         
-        // Direct role comparison
         if ($user->role === 'admin') {
             return redirect()->route('admin.dashboard');
-        } elseif ($user->role === 'master_teacher') {
-            return redirect()->route('teacher.department');
+        } elseif ($user->role === 'academic_head') {
+            return redirect()->route('academic-head.department');
         } elseif ($user->role === 'guidance_counselor') {
             return redirect()->route('counselor.dashboard');
         } elseif ($user->role === 'student') {

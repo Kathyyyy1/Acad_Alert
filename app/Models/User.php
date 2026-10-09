@@ -31,15 +31,14 @@ class User extends Authenticatable
         ];
     }
 
-    // Role check methods
     public function isAdmin(): bool
     {
         return $this->role === 'admin';
     }
 
-    public function isMasterTeacher(): bool
+    public function isAcademicHead(): bool
     {
-        return $this->role === 'master_teacher';
+        return $this->role === 'academic_head';
     }
 
     public function isCounselor(): bool
@@ -52,10 +51,9 @@ class User extends Authenticatable
         return $this->role === 'student';
     }
 
-    // Relationships
-    public function masterTeacher()
+    public function academicHead()
     {
-        return $this->hasOne(MasterTeacher::class);
+        return $this->hasOne(AcademicHead::class);
     }
 
     public function counselor()

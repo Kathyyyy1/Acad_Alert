@@ -1,7 +1,7 @@
 # File Tree: acadalerts
 
 **Generated:** 6/12/2026, 8:41:53 PM
-**Root Path:** `c:\xampp\htdocs\acadalerts`
+**Root Path:** `C:\xampp\htdocs\Capstone2026\acadalerts`  _(historical snapshot — the folder was later renamed from `acadalerts_vibecoding` to `acadalerts`)_
 
 ```
 ├── app

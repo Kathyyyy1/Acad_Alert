@@ -28,7 +28,7 @@ class SystemSettingsTableSeeder extends Seeder
                 'setting_key' => $data['setting_key'],
                 'setting_value' => $data['setting_value'],
                 'description' => $data['description'],
-                'updated_by' => 1, // Admin user
+                'updated_by' => 1,
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);

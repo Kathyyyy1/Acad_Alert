@@ -10,9 +10,11 @@
 @endsection
 
 @section('content')
+<div class="ah-page admin-page" style="--ah-photo: url('{{ asset('images/backgrounds/bg_smll_udd.jpg') }}')">
+
 <div class="row">
     <div class="col-lg-8 mx-auto">
-        <div class="card">
+        <div class="card ah-glow ah-reveal" style="--ah-i: 0;">
             <div class="card-header bg-primary text-white">
                 <i class="fas fa-user-edit me-2"></i> Edit User: {{ $user->name }}
             </div>
@@ -35,7 +37,6 @@
                     @csrf
                     @method('PUT')
                     
-                    <!-- Basic Information -->
                     <div class="mb-3">
                         <label class="form-label fw-bold">Name</label>
                         <input type="text" class="form-control @error('name') is-invalid @enderror" 
@@ -54,14 +55,13 @@
                         <label class="form-label fw-bold">Role</label>
                         <select class="form-select @error('role') is-invalid @enderror" name="role" id="roleSelect" required>
                             <option value="admin" {{ old('role', $user->role) == 'admin' ? 'selected' : '' }}>Admin</option>
-                            <option value="master_teacher" {{ old('role', $user->role) == 'master_teacher' ? 'selected' : '' }}>Master Teacher</option>
+                            <option value="academic_head" {{ old('role', $user->role) == 'academic_head' ? 'selected' : '' }}>Academic Head</option>
                             <option value="guidance_counselor" {{ old('role', $user->role) == 'guidance_counselor' ? 'selected' : '' }}>Guidance Counselor</option>
                             <option value="student" {{ old('role', $user->role) == 'student' ? 'selected' : '' }}>Student</option>
                         </select>
                         @error('role') <div class="invalid-feedback">{{ $message }}</div> @enderror
                     </div>
                     
-                    <!-- Department (for Master Teacher and Counselor) -->
                     <div class="mb-3" id="departmentSection">
                         <label class="form-label fw-bold">Department</label>
                         <select class="form-select" name="department_id" id="departmentSelect">
@@ -73,15 +73,13 @@
                                 </option>
                             @endforeach
                         </select>
-                        <small class="text-muted">Required for Master Teacher and Counselor roles</small>
+                        <small class="text-muted">Required for Academic Head and Counselor roles</small>
                     </div>
                     
-                    <!-- Student-Specific Fields -->
                     <div id="studentFields" style="display: none;">
                         <hr>
                         <h6 class="fw-bold text-primary">Student Information</h6>
                         
-                        <!-- First Name & Last Name -->
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <label class="form-label fw-bold">First Name</label>
@@ -95,28 +93,25 @@
                             </div>
                         </div>
                         
-                        <!-- Student Number -->
                         <div class="mb-3">
                             <label class="form-label fw-bold">Student Number</label>
                             <input type="text" class="form-control" name="student_number" 
                                    value="{{ old('student_number', $studentDetails->student_number ?? '') }}">
                         </div>
                         
-                        <!-- Department (Student) -->
                         <div class="mb-3">
                             <label class="form-label fw-bold">Department</label>
-                            <select class="form-select" name="department_id" id="studentDepartmentSelect">
+                            <select class="form-select" name="student_department_id" id="studentDepartmentSelect">
                                 <option value="">Select Department</option>
                                 @foreach($departments as $dept)
                                     <option value="{{ $dept->id }}" 
-                                        {{ old('department_id', $studentDetails->program_id ?? '') == $dept->id ? 'selected' : '' }}>
+                                        {{ old('student_department_id', $studentDetails->program_id ?? '') == $dept->id ? 'selected' : '' }}>
                                         {{ $dept->code }} - {{ $dept->name }}
                                     </option>
                                 @endforeach
                             </select>
                         </div>
                         
-                        <!-- Program -->
                         <div class="mb-3">
                             <label class="form-label fw-bold">Program</label>
                             <select class="form-select" name="program_id" id="programSelect">
@@ -129,7 +124,6 @@
                             </select>
                         </div>
                         
-                        <!-- Year Level -->
                         <div class="mb-3">
                             <label class="form-label fw-bold">Year Level</label>
                             <select class="form-select" name="year_level_id" id="yearLevelSelect">
@@ -142,7 +136,6 @@
                             </select>
                         </div>
                         
-                        <!-- Block -->
                         <div class="mb-3">
                             <label class="form-label fw-bold">Block</label>
                             <select class="form-select" name="block_id" id="blockSelect">
@@ -155,7 +148,6 @@
                             </select>
                         </div>
                         
-                        <!-- Student Status -->
                         <div class="mb-3">
                             <label class="form-label fw-bold">Student Status</label>
                             <select class="form-select" name="status">
@@ -165,7 +157,6 @@
                         </div>
                     </div>
                     
-                    <!-- Status -->
                     <div class="mb-3">
                         <label class="form-label fw-bold">Account Status</label>
                         <div class="form-check">
@@ -176,7 +167,6 @@
                         </div>
                     </div>
                     
-                    <!-- Password -->
                     <div class="mb-3">
                         <label class="form-label fw-bold">New Password</label>
                         <input type="password" class="form-control" name="password" placeholder="Leave blank to keep current">
@@ -200,7 +190,8 @@
     </div>
 </div>
 
-<!-- Reset Confirmation Modal -->
+</div>
+
 <div class="modal fade" id="resetConfirmationModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
@@ -251,13 +242,9 @@
         const yearLevelSelect = document.getElementById('yearLevelSelect');
         const blockSelect = document.getElementById('blockSelect');
         
-        // ========================================
-        // Reset Confirmation Logic (Step 4)
-        // ========================================
         const form = document.getElementById('editUserForm');
         const resetModal = new bootstrap.Modal(document.getElementById('resetConfirmationModal'));
         
-        // Track original values for comparison
         let originalBlockId = '{{ $studentDetails->block_id ?? '' }}';
         let originalProgramId = '{{ $studentDetails->program_id ?? '' }}';
         let originalYearLevelId = '{{ $studentDetails->year_level_id ?? '' }}';
@@ -265,14 +252,12 @@
         function toggleFields() {
             const role = roleSelect.value;
             
-            // Department section (for MT and Counselor)
             if (role === 'admin') {
                 departmentSection.style.display = 'none';
             } else {
                 departmentSection.style.display = 'block';
             }
             
-            // Student fields
             if (role === 'student') {
                 studentFields.style.display = 'block';
             } else {
@@ -280,7 +265,6 @@
             }
         }
         
-        // Load programs when department changes
         function loadPrograms(departmentId, selectedProgramId) {
             programSelect.innerHTML = '<option value="">Loading...</option>';
             fetch(`/admin/get-programs/${departmentId}`)
@@ -296,7 +280,6 @@
                         }
                         programSelect.appendChild(option);
                     });
-                    // Trigger year level load if a program is selected
                     if (selectedProgramId) {
                         loadYearLevels(selectedProgramId);
                     }
@@ -306,7 +289,6 @@
                 });
         }
         
-        // Load year levels when program changes
         function loadYearLevels(programId, selectedYearLevelId) {
             yearLevelSelect.innerHTML = '<option value="">Loading...</option>';
             fetch(`/admin/get-year-levels/${programId}`)
@@ -331,7 +313,6 @@
                 });
         }
         
-        // Load blocks when year level changes
         function loadBlocks(yearLevelId, selectedBlockId) {
             blockSelect.innerHTML = '<option value="">Loading...</option>';
             fetch(`/admin/get-blocks/${yearLevelId}`)
@@ -353,9 +334,6 @@
                 });
         }
         
-        // ========================================
-        // Reset Confirmation Logic
-        // ========================================
         form.addEventListener('submit', function(e) {
             const role = roleSelect.value;
             
@@ -368,26 +346,21 @@
             const newProgramId = document.getElementById('programSelect').value;
             const newYearLevelId = document.getElementById('yearLevelSelect').value;
             
-            // Check if any academic field has changed
             const blockChanged = originalBlockId && newBlockId && originalBlockId != newBlockId;
             const programChanged = originalProgramId && newProgramId && originalProgramId != newProgramId;
             const yearLevelChanged = originalYearLevelId && newYearLevelId && originalYearLevelId != newYearLevelId;
             
             if (blockChanged || programChanged || yearLevelChanged) {
                 e.preventDefault();
-                // Show confirmation modal
                 resetModal.show();
             }
         });
         
-        // Confirm reset
         document.getElementById('confirmResetBtn').addEventListener('click', function() {
-            // Submit the form
             form.submit();
             resetModal.hide();
         });
         
-        // Event listeners
         roleSelect.addEventListener('change', toggleFields);
         
         deptSelect.addEventListener('change', function() {
@@ -418,10 +391,8 @@
             }
         });
         
-        // Initial setup
         toggleFields();
         
-        // If student, set up department selection
         if (roleSelect.value === 'student') {
             const initialDeptId = document.getElementById('studentDepartmentSelect').value;
             const initialProgramId = programSelect.value;

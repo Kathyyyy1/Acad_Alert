@@ -3,97 +3,81 @@
 namespace App\Http\Controllers\Student;
 
 use App\Http\Controllers\Controller;
+use App\Repositories\Api\AcademicStructureRepository;
+use App\Repositories\Api\AttendanceSummaryRepository;
+use App\Repositories\Api\GradeRepository;
+use App\Repositories\Api\StaffRepository;
+use App\Repositories\Api\StudentRepository;
+use App\Repositories\Local\RiskScoreRepository;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;  
+use App\Services\StudentNotificationService;
 
 class DashboardController extends Controller
 {
-    public function index(Request $request)
+    public function index(Request $request, StudentRepository $students)
     {
         $user = Auth::user();
         
-        // Get student record
-        $student = DB::table('students')->where('email', $user->email)->first();
+        $student = $students->findByEmail($user->email);
         if (!$student) {
             return redirect()->route('dashboard')->with('error', 'Student record not found.');
         }
         
-        // Get current period from request or default
         $currentPeriod = $request->input('period', 'Midterm');
         $schoolYear = $request->input('school_year', '2024-2025');
         
-        // Get student's block and program info
         $studentInfo = $this->getStudentInfo($student->id);
         
-        // Get risk history for trend chart
         $riskHistory = $this->getRiskHistory($student->id, $schoolYear);
+        $riskTrend = $this->buildRiskTrend($riskHistory);
         
-        // Get current risk score
         $currentRisk = $this->getCurrentRisk($student->id, $currentPeriod, $schoolYear);
+        $riskFactors = $this->decodeJsonList($currentRisk->risk_factors ?? null);
         
-        // Get subject grades
         $subjectGrades = $this->getSubjectGrades($student->id, $currentPeriod, $schoolYear);
+        $gradeSummary = $this->buildGradeSummary($subjectGrades);
         
-        // Get attendance breakdown
         $attendanceBreakdown = $this->getAttendanceBreakdown($student->id, $currentPeriod, $schoolYear);
-        
-        // Get alerts
-        $alerts = $this->getAlerts($student->id, $currentPeriod, $schoolYear);
+        $attendanceSummary = $this->getAttendanceSummary($student->id, $currentPeriod, $schoolYear);
+
+        $alerts = $this->getAlerts($student->id);
         $unreadAlerts = $alerts->where('is_acknowledged', false)->count();
-        
-        // Get intervention recommendations
+
         $recommendations = $this->getRecommendations($student->id);
-        
-        // Get counselor info
+
         $counselorInfo = $this->getCounselorInfo($student->id);
-        
-        // Calculate progress comparison (before vs after intervention)
-        $progressComparison = $this->getProgressComparison($student->id, $schoolYear);
-        
-        // Get previous period risk (for comparison)
-        $previousPeriod = $this->getPreviousPeriod($currentPeriod);
-        $previousRisk = $this->getPreviousRisk($student->id, $previousPeriod, $schoolYear);
-        
-        // Calculate improvement
-        $improvement = null;
-        if ($currentRisk && $previousRisk) {
-            $improvement = $previousRisk->risk_score - $currentRisk->risk_score;
-        }
-        
-        // Get self-help resources
-        $resources = $this->getSelfHelpResources($currentRisk->risk_level ?? 'Low');
-        
+
         return view('student.dashboard', [
             'student' => $student,
             'studentInfo' => $studentInfo,
-            'riskHistory' => $riskHistory,
             'currentRisk' => $currentRisk,
-            'previousRisk' => $previousRisk,
-            'improvement' => $improvement,
+            'riskFactors' => $riskFactors,
+            'riskTrend' => $riskTrend,
             'subjectGrades' => $subjectGrades,
+            'gradeSummary' => $gradeSummary,
             'attendanceBreakdown' => $attendanceBreakdown,
+            'attendanceSummary' => $attendanceSummary,
             'alerts' => $alerts,
             'unreadAlerts' => $unreadAlerts,
             'recommendations' => $recommendations,
             'counselorInfo' => $counselorInfo,
-            'progressComparison' => $progressComparison,
-            'resources' => $resources,
             'currentPeriod' => $currentPeriod,
-            'previousPeriod' => $previousPeriod,
             'schoolYear' => $schoolYear,
         ]);
     }
     
-    public function acknowledgeAlert(Request $request)
+    public function acknowledgeAlert(Request $request, StudentRepository $students)
     {
         $request->validate([
             'flag_id' => 'required|integer|exists:flags,id',
         ]);
 
         $user = Auth::user();
-        $student = DB::table('students')->where('email', $user->email)->first();
+
+        // Student records come from the mock API; flags and acknowledgments stay local.
+        $student = $students->findByEmail($user->email);
 
         if (!$student) {
             return response()->json([
@@ -102,7 +86,6 @@ class DashboardController extends Controller
             ], 404);
         }
 
-        // Verify flag belongs to this student
         $flag = DB::table('flags')
             ->where('id', $request->flag_id)
             ->where('student_id', $student->id)
@@ -122,14 +105,12 @@ class DashboardController extends Controller
             ], 400);
         }
 
-        // Check if acknowledgment already exists
         $exists = DB::table('alert_acknowledgments')
             ->where('student_id', $student->id)
             ->where('flag_id', $request->flag_id)
             ->exists();
 
         if ($exists) {
-            // Update the existing acknowledgment timestamp
             DB::table('alert_acknowledgments')
                 ->where('student_id', $student->id)
                 ->where('flag_id', $request->flag_id)
@@ -138,7 +119,6 @@ class DashboardController extends Controller
                     'updated_at' => now(),
                 ]);
         } else {
-            // Create new acknowledgment
             DB::table('alert_acknowledgments')->insert([
                 'student_id' => $student->id,
                 'flag_id' => $request->flag_id,
@@ -149,7 +129,6 @@ class DashboardController extends Controller
             ]);
         }
 
-        // Update the flag
         DB::table('flags')
             ->where('id', $request->flag_id)
             ->update([
@@ -163,303 +142,196 @@ class DashboardController extends Controller
         ]);
     }
 
-    // ============================================================
-    // Protected Helper Methods
-    // ============================================================
 
     protected function getStudentInfo(int $studentId)
     {
-        return DB::table('students')
-            ->join('blocks', 'students.block_id', '=', 'blocks.id')
-            ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-            ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-            ->where('students.id', $studentId)
-            ->select(
-                'students.*',
-                'blocks.name as block_name',
-                'year_levels.name as year_level',
-                'programs.code as program_code',
-                'programs.name as program_name'
-            )
-            ->first();
+        $structure = app(AcademicStructureRepository::class);
+        $student = app(StudentRepository::class)->find($studentId);
+        $placement = $student !== null ? $structure->blockPlacement($student->block_id) : null;
+
+        if ($student === null || $placement === null || $placement['program_id'] === null) {
+            return null;
+        }
+
+        $info = clone $student;
+        $info->block_name = $placement['block_name'] ?? null;
+        $info->year_level = $placement['year_level_name'] ?? null;
+        $info->program_code = $placement['program_code'] ?? null;
+        $info->program_name = $placement['program_name'] ?? null;
+
+        return $info;
     }
 
     protected function getRiskHistory(int $studentId, string $schoolYear)
     {
-        return DB::table('risk_scores')
-            ->where('student_id', $studentId)
-            ->where('school_year', $schoolYear)
-            ->orderByRaw("FIELD(grading_period, 'Prelim', 'Midterm', 'Semifinal', 'Finals')")
-            ->get();
+        // risk_scores stays local; the FIELD() ordering is applied in PHP.
+        return app(RiskScoreRepository::class)->allForStudent($studentId, $schoolYear);
     }
 
     protected function getCurrentRisk(int $studentId, string $period, string $schoolYear)
     {
-        return DB::table('risk_scores')
-            ->where('student_id', $studentId)
-            ->where('grading_period', $period)
-            ->where('school_year', $schoolYear)
-            ->first();
-    }
-
-    protected function getPreviousRisk(int $studentId, ?string $period, string $schoolYear)
-    {
-        if (!$period) {
-            return null;
-        }
-        return DB::table('risk_scores')
-            ->where('student_id', $studentId)
-            ->where('grading_period', $period)
-            ->where('school_year', $schoolYear)
-            ->first();
+        return app(RiskScoreRepository::class)->forStudentPeriod($studentId, $period, $schoolYear);
     }
 
     protected function getSubjectGrades(int $studentId, string $period, string $schoolYear)
     {
-        return DB::table('grades')
-            ->join('subjects', 'grades.subject_id', '=', 'subjects.id')
-            ->where('grades.student_id', $studentId)
-            ->where('grades.grading_period', $period)
-            ->where('grades.school_year', $schoolYear)
-            ->select(
-                'grades.*',
-                'subjects.subject_code',
-                'subjects.subject_name'
-            )
-            ->orderBy('grades.numerical_grade', 'asc')
-            ->get();
+        // grades + the subjects join are both served by the mock API; the
+        // repository resolves the join in PHP and orders by numerical_grade.
+        return app(GradeRepository::class)->subjectGradesForStudent($studentId, $period, $schoolYear);
     }
 
     protected function getAttendanceBreakdown(int $studentId, string $period, string $schoolYear)
     {
-        return DB::table('attendance_summaries')
-            ->join('subjects', 'attendance_summaries.subject_id', '=', 'subjects.id')
-            ->where('attendance_summaries.student_id', $studentId)
-            ->where('attendance_summaries.grading_period', $period)
-            ->where('attendance_summaries.school_year', $schoolYear)
-            ->select(
-                'attendance_summaries.*',
-                'subjects.subject_code',
-                'subjects.subject_name'
-            )
-            ->orderBy('attendance_summaries.attendance_rate', 'asc')
-            ->get();
+        // attendance_summaries + the subjects join are both served by the mock API;
+        // the repository resolves the join in PHP and orders by attendance_rate.
+        return app(AttendanceSummaryRepository::class)
+            ->subjectSummariesForStudent($studentId, $period, $schoolYear);
     }
 
-    /**
-     * Get alerts for a student.
-     * Fixed: Added type hints and Log import
-     */
-    protected function getAlerts(int $studentId, string $period, string $schoolYear)
+    protected function getAlerts(int $studentId)
     {
-        // Get all flags for this student
-        $flags = DB::table('flags')
-            ->where('student_id', $studentId)
-            ->where('grading_period', $period)
-            ->where('school_year', $schoolYear)
-            ->orderBy('created_at', 'desc')
-            ->get();
-        
-        // Debug log
-        Log::info('Retrieved student alerts', [
-            'student_id' => $studentId,
-            'count' => $flags->count(),
-            'flags' => $flags->pluck('flag_type')->toArray(),
-        ]);
-        
-        // Map flag types to user-friendly messages
-        $flagMessages = [
-            'high_risk' => 'You are at High Risk. Please see your guidance counselor.',
-            'consecutive_high_risk' => 'You have been at High Risk for multiple periods. Immediate attention needed.',
-            'low_attendance' => 'Your attendance has dropped below 70%. Please see your instructor.',
-            'failing_grade' => 'You have a failing grade in one or more subjects.',
-            'attendance_warning' => 'Your attendance is approaching the warning threshold.',
-            'attendance_drop' => 'Your attendance has dropped critically.',
-            'counselor_update' => 'Your guidance counselor has updated your case.',
-            'counselor_action' => 'Your guidance counselor has taken action on your case.',
-            'status_update' => 'Your case status has been updated.',
-            'priority_update' => 'Your case priority has been updated.',
-            'case_resolved' => 'Your case has been resolved!',
-            'case_reopened' => 'Your case has been reopened.',
-        ];
-        
-        // Add messages to flags
-        foreach ($flags as $flag) {
-            $flag->message = $flagMessages[$flag->flag_type] ?? 'You have a new alert.';
-        }
-        
-        return $flags;
+        return app(StudentNotificationService::class)->forStudent($studentId);
     }
 
     protected function getRecommendations(int $studentId)
     {
-        return DB::table('intervention_recommendations')
+        $recommendations = DB::table('intervention_recommendations')
             ->where('student_id', $studentId)
             ->orderBy('generated_at', 'desc')
-            ->first();
+            ->get();
+
+        if ($recommendations->isEmpty()) {
+            return $recommendations;
+        }
+
+        // Completion lives in a separate table (one row per recommendation the
+        // student has actually marked done), so the statuses are merged in here.
+        $completedIds = DB::table('student_recommendation_tracking')
+            ->where('student_id', $studentId)
+            ->get()
+            ->filter(fn ($row) => (int) $row->is_completed === 1)
+            ->pluck('recommendation_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        foreach ($recommendations as $recommendation) {
+            $recommendation->is_completed = in_array((int) $recommendation->id, $completedIds, true);
+            $recommendation->risk_factors_list = $this->decodeJsonList($recommendation->risk_factors ?? null);
+            $recommendation->suggested_actions_list = $this->decodeJsonList($recommendation->suggested_actions ?? null);
+        }
+
+        return $recommendations;
+    }
+
+    protected function buildRiskTrend($riskHistory): array
+    {
+        $levelValues = ['Low' => 1, 'Moderate' => 2, 'High' => 3];
+        $rows = [];
+        $previous = null;
+
+        foreach ($riskHistory as $row) {
+            $trend = 'stable';
+            $delta = null;
+
+            if ($previous !== null) {
+                $delta = (int) $row->risk_score - (int) $previous->risk_score;
+
+                $currentValue = $levelValues[(string) $row->risk_level] ?? 0;
+                $previousValue = $levelValues[(string) $previous->risk_level] ?? 0;
+
+                if ($currentValue > $previousValue) {
+                    $trend = 'worsening';
+                } elseif ($currentValue < $previousValue) {
+                    $trend = 'improving';
+                }
+            }
+
+            $rows[] = [
+                'period' => (string) $row->grading_period,
+                'score' => (int) $row->risk_score,
+                'level' => (string) $row->risk_level,
+                'delta' => $delta,
+                'trend' => $trend,
+            ];
+
+            $previous = $row;
+        }
+
+        $last = $rows === [] ? null : $rows[array_key_last($rows)];
+
+        return [
+            'rows' => $rows,
+            'overall' => $last['trend'] ?? 'unknown',
+            'delta' => $last['delta'] ?? null,
+        ];
+    }
+
+    protected function buildGradeSummary($rows): array
+    {
+        $values = $rows->map(fn ($row) => (float) $row->numerical_grade)->values();
+
+        return [
+            'total' => $rows->count(),
+            'average' => $values->isEmpty() ? null : round((float) $values->avg(), 2),
+            'failing' => $values->filter(fn ($grade) => $grade < 75)->count(),
+            'highest' => $values->isEmpty() ? null : (float) $values->max(),
+            'lowest' => $values->isEmpty() ? null : (float) $values->min(),
+        ];
+    }
+
+    protected function getAttendanceSummary(int $studentId, string $period, string $schoolYear): ?object
+    {
+        return app(AttendanceSummaryRepository::class)
+            ->aggregateForStudent($studentId, $period, $schoolYear);
+    }
+
+    protected function decodeJsonList($value): array
+    {
+        if (!is_string($value) || trim($value) === '') {
+            return [];
+        }
+
+        $decoded = json_decode($value, true);
+
+        return is_array($decoded) ? $decoded : [];
     }
 
     protected function getCounselorInfo(int $studentId)
     {
-        // Get student's department
-        $student = DB::table('students')
-            ->join('blocks', 'students.block_id', '=', 'blocks.id')
-            ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-            ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-            ->where('students.id', $studentId)
-            ->select('programs.department_id')
-            ->first();
-        
-        if (!$student) {
+        // students + the placement chain are served by the mock API now, so the
+        // student's department is an index lookup.
+        $departmentId = app(AcademicStructureRepository::class)->departmentIdForStudent($studentId);
+
+        if ($departmentId === null) {
             return null;
         }
-        
-        // Get counselor for this department
-        $counselor = DB::table('counselors')
-            ->join('users', 'counselors.user_id', '=', 'users.id')
-            ->where('counselors.department_id', $student->department_id)
-            ->orWhereNull('counselors.department_id')
-            ->select(
-                'counselors.*',
-                'users.name as name',
-                'users.email as email'
-            )
-            ->first();
-        
-        return $counselor;
-    }
 
-    protected function getProgressComparison(int $studentId, string $schoolYear)
-    {
-        // Get first and last risk scores
-        $first = DB::table('risk_scores')
-            ->where('student_id', $studentId)
-            ->where('school_year', $schoolYear)
-            ->orderByRaw("FIELD(grading_period, 'Prelim', 'Midterm', 'Semifinal', 'Finals')")
-            ->first();
-        
-        $last = DB::table('risk_scores')
-            ->where('student_id', $studentId)
-            ->where('school_year', $schoolYear)
-            ->orderByRaw("FIELD(grading_period, 'Prelim', 'Midterm', 'Semifinal', 'Finals') desc")
-            ->first();
-        
-        if (!$first || !$last) {
+        $staff = app(StaffRepository::class);
+
+        $counselor = $staff->counselors()->first(fn ($row) => (
+            (int) $row->department_id === $departmentId || $row->department_id === null
+        ));
+
+        if ($counselor === null) {
             return null;
         }
-        
-        return (object) [
-            'first_period' => $first->grading_period,
-            'first_score' => $first->risk_score,
-            'first_level' => $first->risk_level,
-            'last_period' => $last->grading_period,
-            'last_score' => $last->risk_score,
-            'last_level' => $last->risk_level,
-            'improvement' => $first->risk_score - $last->risk_score,
-        ];
+
+        $user = $staff->user($counselor->user_id);
+
+        $decorated = clone $counselor;
+        $decorated->name = $user->name ?? null;
+        $decorated->email = $user->email ?? null;
+
+        return $decorated;
     }
 
-    protected function getPreviousPeriod(?string $current): ?string
-    {
-        $periods = ['Prelim', 'Midterm', 'Semifinal', 'Finals'];
-        $index = array_search($current, $periods);
-        return $index > 0 ? $periods[$index - 1] : null;
-    }
 
-    protected function getSelfHelpResources(string $riskLevel): array
-    {
-        $resources = [
-            'Low' => [
-                [
-                    'title' => 'Academic Success Tips',
-                    'description' => 'Learn effective study strategies and time management.',
-                    'link' => '#',
-                    'icon' => 'fas fa-lightbulb',
-                ],
-                [
-                    'title' => 'Peer Tutoring Program',
-                    'description' => 'Get help from fellow students in your courses.',
-                    'link' => '#',
-                    'icon' => 'fas fa-users',
-                ],
-                [
-                    'title' => 'Writing Center',
-                    'description' => 'Improve your writing skills with professional tutors.',
-                    'link' => '#',
-                    'icon' => 'fas fa-pen-fancy',
-                ],
-            ],
-            'Moderate' => [
-                [
-                    'title' => '📚 Tutoring Services',
-                    'description' => 'Programming tutoring: Tues/Thurs 2-4 PM, Room 301',
-                    'link' => '#',
-                    'icon' => 'fas fa-chalkboard-teacher',
-                ],
-                [
-                    'title' => '📖 Study Skills Workshop',
-                    'description' => 'Fridays 1-2 PM, Library Hall',
-                    'link' => '#',
-                    'icon' => 'fas fa-book',
-                ],
-                [
-                    'title' => '👥 Peer Support Group',
-                    'description' => 'Wednesdays 3-4 PM, Guidance Office',
-                    'link' => '#',
-                    'icon' => 'fas fa-hand-holding-heart',
-                ],
-                [
-                    'title' => 'Time Management Workshop',
-                    'description' => 'Learn to balance academics and personal life.',
-                    'link' => '#',
-                    'icon' => 'fas fa-clock',
-                ],
-            ],
-            'High' => [
-                [
-                    'title' => '📚 Intensive Tutoring',
-                    'description' => 'One-on-one tutoring available daily, 9 AM - 5 PM',
-                    'link' => '#',
-                    'icon' => 'fas fa-chalkboard-teacher',
-                ],
-                [
-                    'title' => '📖 Academic Counseling',
-                    'description' => 'Immediate counseling available at Guidance Office',
-                    'link' => '#',
-                    'icon' => 'fas fa-headset',
-                ],
-                [
-                    'title' => '👥 Study Group',
-                    'description' => 'Join a study group for collaborative learning',
-                    'link' => '#',
-                    'icon' => 'fas fa-users',
-                ],
-                [
-                    'title' => '📊 Progress Monitoring',
-                    'description' => 'Weekly check-ins with your academic adviser',
-                    'link' => '#',
-                    'icon' => 'fas fa-chart-line',
-                ],
-                [
-                    'title' => '🏠 Parent-Teacher Conference',
-                    'description' => 'Schedule a meeting with your parents and teachers',
-                    'link' => '#',
-                    'icon' => 'fas fa-user-friends',
-                ],
-            ],
-        ];
-        
-        return $resources[$riskLevel] ?? $resources['Low'];
-    }
-
-    // ============================================================
-    // Placeholder methods for separate pages
-    // ============================================================
-
-    public function grades(Request $request)
+    public function grades(Request $request, StudentRepository $students)
     {
         $user = Auth::user();
-        $student = DB::table('students')->where('email', $user->email)->first();
+
+        // Student records come from the mock API.
+        $student = $students->findByEmail($user->email);
         if (!$student) {
             return redirect()->route('dashboard')->with('error', 'Student record not found.');
         }
@@ -468,15 +340,17 @@ class DashboardController extends Controller
         $schoolYear = $request->input('school_year', '2024-2025');
         $studentInfo = $this->getStudentInfo($student->id);
         $subjectGrades = $this->getSubjectGrades($student->id, $currentPeriod, $schoolYear);
-        $periods = ['Prelim', 'Midterm', 'Semifinal', 'Finals'];
+        $periods = ['Prelim', 'Midterm', 'Finals'];
         
         return view('student.grades', compact('student', 'studentInfo', 'subjectGrades', 'currentPeriod', 'schoolYear', 'periods'));
     }
 
-    public function attendance(Request $request)
+    public function attendance(Request $request, StudentRepository $students)
     {
         $user = Auth::user();
-        $student = DB::table('students')->where('email', $user->email)->first();
+
+        // Student records come from the mock API.
+        $student = $students->findByEmail($user->email);
         if (!$student) {
             return redirect()->route('dashboard')->with('error', 'Student record not found.');
         }
@@ -485,21 +359,10 @@ class DashboardController extends Controller
         $schoolYear = $request->input('school_year', '2024-2025');
         $studentInfo = $this->getStudentInfo($student->id);
         $attendanceBreakdown = $this->getAttendanceBreakdown($student->id, $currentPeriod, $schoolYear);
-        $periods = ['Prelim', 'Midterm', 'Semifinal', 'Finals'];
+        $periods = ['Prelim', 'Midterm', 'Finals'];
         
-        // Get attendance summary
-        $attendanceSummary = DB::table('attendance_summaries')
-            ->where('student_id', $student->id)
-            ->where('grading_period', $currentPeriod)
-            ->where('school_year', $schoolYear)
-            ->select(
-                DB::raw('AVG(attendance_rate) as overall_attendance'),
-                DB::raw('SUM(total_absences) as total_absences'),
-                DB::raw('SUM(total_lates) as total_lates'),
-                DB::raw('SUM(total_excused) as total_excused'),
-                DB::raw('COUNT(*) as subject_count')
-            )
-            ->first();
+        $attendanceSummary = app(AttendanceSummaryRepository::class)
+            ->aggregateForStudent($student->id, $currentPeriod, $schoolYear);
         
         return view('student.attendance', compact(
             'student', 'studentInfo', 'attendanceBreakdown', 'attendanceSummary',
@@ -507,10 +370,12 @@ class DashboardController extends Controller
         ));
     }
 
-    public function counselor(Request $request)
+    public function counselor(Request $request, StudentRepository $students)
     {
         $user = Auth::user();
-        $student = DB::table('students')->where('email', $user->email)->first();
+
+        // Student records come from the mock API.
+        $student = $students->findByEmail($user->email);
         if (!$student) {
             return redirect()->route('dashboard')->with('error', 'Student record not found.');
         }

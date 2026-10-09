@@ -10,9 +10,11 @@
 @endsection
 
 @section('content')
+<div class="ah-page admin-page" style="--ah-photo: url('{{ asset('images/backgrounds/bg_smll_udd.jpg') }}')">
+
 <div class="row">
     <div class="col-lg-8 mx-auto">
-        <div class="card">
+        <div class="card ah-glow ah-reveal" style="--ah-i: 0;">
             <div class="card-header bg-primary text-white">
                 <i class="fas fa-user-plus me-2"></i> Create New User
             </div>
@@ -44,7 +46,7 @@
                                 name="role" id="roleSelect" required>
                             <option value="">Select Role</option>
                             <option value="admin" {{ old('role') == 'admin' ? 'selected' : '' }}>Admin</option>
-                            <option value="master_teacher" {{ old('role') == 'master_teacher' ? 'selected' : '' }}>Master Teacher</option>
+                            <option value="academic_head" {{ old('role') == 'academic_head' ? 'selected' : '' }}>Academic Head</option>
                             <option value="guidance_counselor" {{ old('role') == 'guidance_counselor' ? 'selected' : '' }}>Guidance Counselor</option>
                             <option value="student" {{ old('role') == 'student' ? 'selected' : '' }}>Student</option>
                         </select>
@@ -88,6 +90,8 @@
         </div>
     </div>
 </div>
+
+</div>
 @endsection
 
 @push('scripts')
@@ -101,7 +105,6 @@
         }
     });
     
-    // Trigger on page load
     document.addEventListener('DOMContentLoaded', function() {
         const event = new Event('change');
         document.getElementById('roleSelect').dispatchEvent(event);

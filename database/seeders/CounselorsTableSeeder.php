@@ -16,7 +16,6 @@ class CounselorsTableSeeder extends Seeder
         $users = DB::table('users')->where('role', 'guidance_counselor')->get();
         
         foreach ($users as $user) {
-            // Get department based on email
             $departmentCode = strtoupper(explode('@', $user->email)[0]);
             $departmentCode = str_replace('GC.', '', $departmentCode);
             

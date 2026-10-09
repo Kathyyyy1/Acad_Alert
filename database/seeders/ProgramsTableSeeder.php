@@ -25,7 +25,6 @@ class ProgramsTableSeeder extends Seeder
         foreach ($csv as $row) {
             $data = array_combine($header, $row);
             
-            // Get department_id from department code
             $department = DB::table('departments')->where('code', $data['department_code'])->first();
             if (!$department) {
                 $this->command->error("Department not found: {$data['department_code']}");

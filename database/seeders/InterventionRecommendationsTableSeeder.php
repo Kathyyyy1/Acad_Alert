@@ -25,30 +25,46 @@ class InterventionRecommendationsTableSeeder extends Seeder
     {
         Schema::disableForeignKeyConstraints();
         DB::table('intervention_recommendations')->truncate();
-        
-        $highRiskStudents = DB::table('risk_scores')
-            ->where('risk_level', 'High')
-            ->distinct('student_id')
-            ->get(['student_id']);
-        
-        $recCount = 0;
-        
-        foreach ($highRiskStudents as $student) {
-            $riskFactors = ['Low grades in major subjects', 'Poor attendance record'];
-            $suggestedActions = array_rand(array_flip($this->recommendations), 3);
-            
-            DB::table('intervention_recommendations')->insert([
-                'student_id' => $student->student_id,
-                'risk_factors' => json_encode($riskFactors),
-                'suggested_actions' => json_encode($suggestedActions),
-                'generated_at' => now(),
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-            $recCount++;
-        }
-        
         Schema::enableForeignKeyConstraints();
-        $this->command->info("$recCount intervention recommendations seeded successfully.");
+
+        // Seed PER PERIOD so the dashboard's categorical filter has real,
+        // non-blended data for Prelim / Midterm / Finals.
+        $gradingPeriods = ['Prelim', 'Midterm', 'Finals'];
+        $schoolYear = '2024-2025';
+
+        $recCount = 0;
+
+        foreach ($gradingPeriods as $period) {
+            // Only students flagged High risk IN THIS PERIOD get recommendations.
+            $highRiskStudents = DB::table('risk_scores')
+                ->where('risk_level', 'High')
+                ->where('grading_period', $period)
+                ->where('school_year', $schoolYear)
+                ->select('student_id', 'risk_factors')
+                ->get();
+
+            foreach ($highRiskStudents as $student) {
+                $riskFactors = json_decode($student->risk_factors ?? '', true);
+                if (!is_array($riskFactors) || empty($riskFactors)) {
+                    $riskFactors = ['Low grades in major subjects', 'Poor attendance record'];
+                }
+
+                $suggestedActions = array_values(array_rand(array_flip($this->recommendations), 3));
+
+                DB::table('intervention_recommendations')->insert([
+                    'student_id' => $student->student_id,
+                    'grading_period' => $period,
+                    'school_year' => $schoolYear,
+                    'risk_factors' => json_encode(array_values($riskFactors)),
+                    'suggested_actions' => json_encode($suggestedActions),
+                    'generated_at' => now(),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+                $recCount++;
+            }
+        }
+
+        $this->command->info("$recCount period-scoped intervention recommendations seeded successfully.");
     }
 }

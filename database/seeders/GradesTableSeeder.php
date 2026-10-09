@@ -8,14 +8,13 @@ use Illuminate\Support\Facades\Schema;
 
 class GradesTableSeeder extends Seeder
 {
-    // Grade distribution (bell curve)
     private $gradeDistribution = [
-        ['min' => 90, 'max' => 100, 'weight' => 15],  // A
-        ['min' => 85, 'max' => 89, 'weight' => 20],   // B+
-        ['min' => 80, 'max' => 84, 'weight' => 20],   // B
-        ['min' => 75, 'max' => 79, 'weight' => 25],   // C
-        ['min' => 70, 'max' => 74, 'weight' => 12],   // D
-        ['min' => 0, 'max' => 69, 'weight' => 8],     // F
+        ['min' => 90, 'max' => 100, 'weight' => 15],
+        ['min' => 85, 'max' => 89, 'weight' => 20],
+        ['min' => 80, 'max' => 84, 'weight' => 20],
+        ['min' => 75, 'max' => 79, 'weight' => 25],
+        ['min' => 70, 'max' => 74, 'weight' => 12],
+        ['min' => 0, 'max' => 69, 'weight' => 8],
     ];
     
     private $letterGrades = [
@@ -29,16 +28,14 @@ class GradesTableSeeder extends Seeder
         
         $students = DB::table('students')->get();
         $subjects = DB::table('subjects')->get();
-        $gradingPeriods = ['Prelim', 'Midterm', 'Semifinal', 'Finals'];
+        $gradingPeriods = ['Prelim', 'Midterm', 'Finals'];
         
         $gradeCount = 0;
         
         foreach ($students as $student) {
-            // Get student's block to determine year level
             $block = DB::table('blocks')->where('id', $student->block_id)->first();
             $yearLevel = DB::table('year_levels')->where('id', $block->year_level_id)->first();
             
-            // Get subjects for this year level and program
             $program = DB::table('programs')->where('id', $yearLevel->program_id)->first();
             $studentSubjects = DB::table('subjects')
                 ->where('program_id', $program->id)
@@ -47,7 +44,6 @@ class GradesTableSeeder extends Seeder
             
             foreach ($studentSubjects as $subject) {
                 foreach ($gradingPeriods as $period) {
-                    // Generate grade based on distribution
                     $grade = $this->generateGrade();
                     $letterGrade = $this->getLetterGrade($grade);
                     

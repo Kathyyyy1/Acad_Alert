@@ -17,7 +17,6 @@ class AlertAcknowledgmentsTableSeeder extends Seeder
         $ackCount = 0;
         
         foreach ($flags as $flag) {
-            // Simulate 50% acknowledgment rate
             if (rand(1, 100) <= 50) {
                 DB::table('alert_acknowledgments')->insert([
                     'student_id' => $flag->student_id,
@@ -28,7 +27,6 @@ class AlertAcknowledgmentsTableSeeder extends Seeder
                     'updated_at' => now(),
                 ]);
                 
-                // Update flag as acknowledged
                 DB::table('flags')
                     ->where('id', $flag->id)
                     ->update(['is_acknowledged' => true]);

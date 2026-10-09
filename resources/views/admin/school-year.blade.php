@@ -15,9 +15,11 @@
 @endsection
 
 @section('content')
+<div class="ah-page admin-page" style="--ah-photo: url('{{ asset('images/backgrounds/bg_smll_udd.jpg') }}')">
+
 <div class="row">
     <div class="col-12 mb-4">
-        <div class="card">
+        <div class="card ah-glow ah-reveal" style="--ah-i: 0;">
             <div class="card-header bg-primary text-white">
                 <i class="fas fa-calendar-alt me-2"></i> School Years
                 <span class="badge bg-light text-primary ms-2">{{ count($schoolYears) }}</span>
@@ -76,7 +78,8 @@
     </div>
 </div>
 
-<!-- Create School Year Modal -->
+</div>
+
 <div class="modal fade" id="addSchoolYearModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">

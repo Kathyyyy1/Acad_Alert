@@ -18,10 +18,11 @@
 @endsection
 
 @section('content')
-<!-- Statistics Cards -->
+<div class="ah-page admin-page" style="--ah-photo: url('{{ asset('images/backgrounds/maincampus02.webp') }}')">
+
 <div class="row">
     <div class="col-xl-3 col-md-6 mb-3">
-        <div class="stat-card primary">
+        <div class="stat-card primary ah-reveal" style="--ah-i: 0;">
             <div class="d-flex justify-content-between align-items-center">
                 <div>
                     <div class="stat-label">Total Due</div>
@@ -34,7 +35,7 @@
         </div>
     </div>
     <div class="col-xl-3 col-md-6 mb-3">
-        <div class="stat-card success">
+        <div class="stat-card success ah-reveal" style="--ah-i: 1;">
             <div class="d-flex justify-content-between align-items-center">
                 <div>
                     <div class="stat-label">Collected</div>
@@ -47,7 +48,7 @@
         </div>
     </div>
     <div class="col-xl-3 col-md-6 mb-3">
-        <div class="stat-card danger">
+        <div class="stat-card danger ah-reveal" style="--ah-i: 2;">
             <div class="d-flex justify-content-between align-items-center">
                 <div>
                     <div class="stat-label">Overdue</div>
@@ -60,7 +61,7 @@
         </div>
     </div>
     <div class="col-xl-3 col-md-6 mb-3">
-        <div class="stat-card info">
+        <div class="stat-card info ah-reveal" style="--ah-i: 3;">
             <div class="d-flex justify-content-between align-items-center">
                 <div>
                     <div class="stat-label">Collection Rate</div>
@@ -74,10 +75,9 @@
     </div>
 </div>
 
-<!-- Quick Stats Summary -->
 <div class="row">
     <div class="col-md-3 col-6 mb-3">
-        <div class="card bg-light">
+        <div class="card bg-light ah-reveal" style="--ah-i: 4;">
             <div class="card-body text-center">
                 <h5 class="text-muted small mb-1">Total Students</h5>
                 <h3>{{ $stats['total_count'] ?? 0 }}</h3>
@@ -85,7 +85,7 @@
         </div>
     </div>
     <div class="col-md-3 col-6 mb-3">
-        <div class="card bg-success text-white">
+        <div class="card bg-success text-white ah-reveal" style="--ah-i: 5;">
             <div class="card-body text-center">
                 <h5 class="text-white-50 small mb-1">Paid</h5>
                 <h3>{{ $stats['paid_count'] ?? 0 }}</h3>
@@ -93,7 +93,7 @@
         </div>
     </div>
     <div class="col-md-3 col-6 mb-3">
-        <div class="card bg-warning text-dark">
+        <div class="card bg-warning text-dark ah-reveal" style="--ah-i: 6;">
             <div class="card-body text-center">
                 <h5 class="text-dark-50 small mb-1">Partial</h5>
                 <h3>{{ $stats['partial_count'] ?? 0 }}</h3>
@@ -101,7 +101,7 @@
         </div>
     </div>
     <div class="col-md-3 col-6 mb-3">
-        <div class="card bg-danger text-white">
+        <div class="card bg-danger text-white ah-reveal" style="--ah-i: 7;">
             <div class="card-body text-center">
                 <h5 class="text-white-50 small mb-1">Overdue</h5>
                 <h3>{{ $stats['overdue_count'] ?? 0 }}</h3>
@@ -110,10 +110,9 @@
     </div>
 </div>
 
-<!-- Filters -->
 <div class="row">
     <div class="col-12 mb-3">
-        <div class="card">
+        <div class="card ah-glow ah-reveal" style="--ah-i: 8;">
             <div class="card-body">
                 <form method="GET" action="{{ route('admin.payments.index') }}" class="row g-2">
                     <div class="col-md-3">
@@ -154,10 +153,9 @@
     </div>
 </div>
 
-<!-- Payment Trend Chart -->
 <div class="row">
     <div class="col-12 mb-3">
-        <div class="card">
+        <div class="card ah-glow ah-reveal" style="--ah-i: 9;">
             <div class="card-header">
                 <i class="fas fa-chart-line text-primary me-2"></i>
                 Payment Trend (Last 6 Months)
@@ -171,10 +169,9 @@
     </div>
 </div>
 
-<!-- Payments Table -->
 <div class="row">
     <div class="col-12 mb-4">
-        <div class="card">
+        <div class="card ah-glow ah-reveal" style="--ah-i: 10;">
             <div class="card-header">
                 <i class="fas fa-credit-card text-primary me-2"></i>
                 Student Payments
@@ -266,10 +263,9 @@
     </div>
 </div>
 
-<!-- Overdue Students -->
 <div class="row">
     <div class="col-12 mb-4">
-        <div class="card border-danger">
+        <div class="card border-danger ah-glow ah-reveal" style="--ah-i: 11;">
             <div class="card-header bg-danger text-white">
                 <i class="fas fa-exclamation-triangle me-2"></i>
                 Overdue Students
@@ -316,10 +312,9 @@
     </div>
 </div>
 
-<!-- Department Summary -->
 <div class="row">
     <div class="col-12 mb-4">
-        <div class="card">
+        <div class="card ah-glow ah-reveal" style="--ah-i: 12;">
             <div class="card-header">
                 <i class="fas fa-building text-primary me-2"></i>
                 Department Payment Summary
@@ -362,7 +357,8 @@
     </div>
 </div>
 
-<!-- View Payment Modal -->
+</div>
+
 <div class="modal fade" id="viewPaymentModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
@@ -386,7 +382,6 @@
     </div>
 </div>
 
-<!-- Record Payment Modal -->
 <div class="modal fade" id="recordPaymentModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
@@ -438,9 +433,6 @@
 
 @push('scripts')
 <script>
-// ========================================
-// Payment Trend Chart - Optimized Financial Layout
-// ========================================
 
 document.addEventListener('DOMContentLoaded', function() {
     const paymentTrend = @json($paymentTrend);
@@ -464,12 +456,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const ctx = canvas.getContext('2d');
     
-    // Format currency for tooltips
     const formatCurrency = (value) => {
         return '₱' + value.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
     };
 
-    // Determine if data exists
     const hasCollectedData = paymentTrend.collected.some(v => v > 0);
     const hasOverdueData = paymentTrend.overdue.some(v => v > 0);
 
@@ -485,7 +475,6 @@ document.addEventListener('DOMContentLoaded', function() {
         return;
     }
 
-    // Calculate max value for Y-axis (with padding)
     const maxValues = [...paymentTrend.collected, ...paymentTrend.overdue];
     const maxValue = Math.max(...maxValues, 0);
     const yAxisMax = Math.ceil(maxValue * 1.2 / 1000000) * 1000000 || 1000000;
@@ -555,7 +544,6 @@ document.addEventListener('DOMContentLoaded', function() {
                             return label + ': ' + formatCurrency(value);
                         },
                         afterBody: function(tooltipItems) {
-                            // Calculate total for the period
                             let total = 0;
                             tooltipItems.forEach(item => {
                                 total += item.parsed.y || 0;
@@ -614,9 +602,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     },
                 }
             },
-            // Bar grouping
             grouped: true,
-            // Animation
             animation: {
                 duration: 800,
                 easing: 'easeInOutQuart',
@@ -625,7 +611,6 @@ document.addEventListener('DOMContentLoaded', function() {
         plugins: [{
             id: 'customTooltip',
             beforeDraw: function(chart) {
-                // Custom logic if needed
             }
         }]
     });
@@ -756,7 +741,6 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 }
 
-// Form submission with enhanced error display
 document.addEventListener('DOMContentLoaded', function() {
     const form = document.getElementById('recordPaymentForm');
     if (form) {
@@ -831,7 +815,6 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-// Record Payment Form Submission
 document.addEventListener('DOMContentLoaded', function() {
     const form = document.getElementById('recordPaymentForm');
     if (form) {
@@ -840,7 +823,6 @@ document.addEventListener('DOMContentLoaded', function() {
             
             const paymentId = this.dataset.paymentId;
             
-            // Validate payment ID exists
             if (!paymentId) {
                 alert('Error: Payment ID not found. Please close and try again.');
                 return;
@@ -851,24 +833,20 @@ document.addEventListener('DOMContentLoaded', function() {
             const reference = document.getElementById('paymentReference').value;
             const notes = document.getElementById('paymentNotes').value;
             
-            // Validate amount
             if (!amount || parseFloat(amount) <= 0) {
                 alert('Please enter a valid amount.');
                 return;
             }
             
-            // Validate date
             if (!paymentDate) {
                 alert('Please select a payment date.');
                 return;
             }
             
-            // Disable submit button
             const submitBtn = this.querySelector('button[type="submit"]');
             submitBtn.disabled = true;
             submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Processing...';
             
-            // Send request
             fetch(`/admin/payments/${paymentId}/record`, {
                 method: 'POST',
                 headers: {
@@ -911,16 +889,11 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-// ========================================
-// Export Report - With Verbose Debugging
-// ========================================
 
 function exportPayments() {
-    // DEBUG: Log function call
     console.log('[Export] exportPayments() called at', new Date().toISOString());
     console.log('[Export] Current URL:', window.location.href);
     
-    // DEBUG: Track execution steps
     let debugLog = {
         function: 'exportPayments',
         timestamp: new Date().toISOString(),
@@ -929,7 +902,6 @@ function exportPayments() {
     };
     
     try {
-        // Get current filter values
         const statusFilter = document.querySelector('select[name="status"]')?.value || 'all';
         const departmentFilter = document.querySelector('select[name="department"]')?.value || 'all';
         const searchFilter = document.querySelector('input[name="search"]')?.value || '';
@@ -943,7 +915,6 @@ function exportPayments() {
         });
         console.log('[Export] Filters collected:', { statusFilter, departmentFilter, searchFilter });
         
-        // Check if filters exist
         if (!statusFilter || !departmentFilter) {
             debugLog.steps.push({
                 step: 'filter_error',
@@ -953,13 +924,12 @@ function exportPayments() {
             console.warn('[Export] Filter elements not found. Using defaults.');
         }
         
-        // Build export URL with parameters
         const exportUrl = new URL('/admin/payments/export', window.location.origin);
         exportUrl.searchParams.append('status', statusFilter);
         exportUrl.searchParams.append('department', departmentFilter);
         exportUrl.searchParams.append('search', searchFilter);
         exportUrl.searchParams.append('format', 'csv');
-        exportUrl.searchParams.append('_t', Date.now()); // Cache busting
+        exportUrl.searchParams.append('_t', Date.now());
         
         debugLog.steps.push({
             step: 'url_constructed',
@@ -968,7 +938,6 @@ function exportPayments() {
         });
         console.log('[Export] Export URL:', exportUrl.toString());
         
-        // Show loading state on button
         const exportBtn = document.getElementById('exportReportBtn');
         if (exportBtn) {
             const originalText = exportBtn.innerHTML;
@@ -984,7 +953,6 @@ function exportPayments() {
             console.log('[Export] Button loading state set');
         }
         
-        // Make the fetch request
         debugLog.steps.push({
             step: 'fetch_started',
             timestamp: new Date().toISOString()
@@ -1018,7 +986,6 @@ function exportPayments() {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
             
-            // Check if response is HTML (error page)
             const contentType = response.headers.get('content-type') || '';
             if (contentType.includes('text/html')) {
                 debugLog.steps.push({
@@ -1041,7 +1008,6 @@ function exportPayments() {
             });
             console.log('[Export] Blob received:', { size: blob.size, type: blob.type });
             
-            // Create download link
             const link = document.createElement('a');
             const url = window.URL.createObjectURL(blob);
             link.href = url;
@@ -1058,7 +1024,6 @@ function exportPayments() {
             });
             console.log('[Export] Download triggered:', link.download);
             
-            // Restore button
             if (exportBtn) {
                 exportBtn.disabled = false;
                 exportBtn.innerHTML = exportBtn.dataset.originalText || '<i class="fas fa-file-export me-1"></i> Export Report';
@@ -1073,7 +1038,6 @@ function exportPayments() {
             console.log('[Export] Export completed successfully');
             console.log('[Export] Full debug log:', debugLog);
             
-            // Show success toast
             showExportToast('✅ Payment report exported successfully!', 'success');
         })
         .catch(error => {
@@ -1088,7 +1052,6 @@ function exportPayments() {
             });
             console.error('[Export] Error during export:', error);
             
-            // Restore button
             if (exportBtn) {
                 exportBtn.disabled = false;
                 exportBtn.innerHTML = exportBtn.dataset.originalText || '<i class="fas fa-file-export me-1"></i> Export Report';
@@ -1097,7 +1060,6 @@ function exportPayments() {
             debugLog.status = 'failed';
             console.log('[Export] Full debug log (error):', debugLog);
             
-            // Show error with debug info
             let errorMsg = '❌ Failed to export report: ' + error.message;
             errorMsg += '\n\n🔍 Debug Info:\n' + JSON.stringify(debugLog, null, 2);
             alert(errorMsg);
@@ -1125,9 +1087,6 @@ function exportPayments() {
     }
 }
 
-// ========================================
-// Export Toast Notification
-// ========================================
 
 function showExportToast(message, type = 'success') {
     const colors = {
@@ -1137,7 +1096,6 @@ function showExportToast(message, type = 'success') {
         info: 'bg-info text-white'
     };
     
-    // Remove existing toasts
     document.querySelectorAll('.export-toast').forEach(el => el.remove());
     
     const toast = document.createElement('div');

@@ -12,7 +12,7 @@ return new class extends Migration
             $table->id();
             $table->foreignId('student_id')->constrained()->onDelete('cascade');
             $table->foreignId('subject_id')->constrained()->onDelete('cascade');
-            $table->enum('grading_period', ['Prelim', 'Midterm', 'Semifinal', 'Finals']);
+            $table->enum('grading_period', ['Prelim', 'Midterm', 'Finals']);
             $table->string('school_year', 9);
             $table->enum('semester', ['1st', '2nd']);
             $table->decimal('total_required_hours', 5, 1);

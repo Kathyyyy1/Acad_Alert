@@ -15,7 +15,7 @@ return new class extends Migration
             $table->foreignId('overridden_by')->constrained('users')->onDelete('restrict');
             $table->string('school_year', 9);
             $table->enum('semester', ['1st', '2nd']);
-            $table->enum('grading_period', ['Prelim', 'Midterm', 'Semifinal', 'Finals']);
+            $table->enum('grading_period', ['Prelim', 'Midterm', 'Finals']);
             $table->integer('original_risk_score');
             $table->enum('original_risk_level', ['Low', 'Moderate', 'High']);
             $table->enum('new_risk_level', ['Low', 'Moderate', 'High']);

@@ -14,16 +14,16 @@ class EscalationsTableSeeder extends Seeder
         DB::table('escalations')->truncate();
         
         $cases = DB::table('cases')->get();
-        $masterTeachers = DB::table('master_teachers')->get();
+        $academicHeads = DB::table('academic_heads')->get();
         
         $escCount = 0;
         
         foreach ($cases as $case) {
-            $masterTeacher = $masterTeachers->random();
+            $academicHead = $academicHeads->random();
             
             DB::table('escalations')->insert([
                 'student_id' => $case->student_id,
-                'escalated_by' => $masterTeacher->user_id,
+                'escalated_by' => $academicHead->user_id,
                 'case_id' => $case->id,
                 'school_year' => '2024-2025',
                 'semester' => '1st',

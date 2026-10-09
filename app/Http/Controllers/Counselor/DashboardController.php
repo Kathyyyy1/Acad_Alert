@@ -4,6 +4,16 @@ namespace App\Http\Controllers\Counselor;
 
 use App\Http\Controllers\Controller;
 use App\Http\Middleware\DepartmentIsolationMiddleware;
+use App\Repositories\Api\AcademicStructureRepository;
+use App\Repositories\Api\AttendanceSummaryRepository;
+use App\Repositories\Api\CalendarRepository;
+use App\Repositories\Api\GradeRepository;
+use App\Repositories\Api\ParentRepository;
+use App\Repositories\Api\StaffRepository;
+use App\Repositories\Api\StudentRepository;
+use App\Repositories\Local\RiskScoreRepository;
+use App\Services\CounselorNavigationService;
+use App\Services\RecommendationTextService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -12,53 +22,108 @@ use Illuminate\Support\Facades\Log;
 
 class DashboardController extends Controller
 {
+    public function __construct(protected RecommendationTextService $recommendationText)
+    {
+    }
+
     public function index(Request $request)
     {
         $user = Auth::user();
+
+        // Counselor + department are injected by the isolation middleware.
+        $counselor = DepartmentIsolationMiddleware::getCounselor($request)
+            ?? app(StaffRepository::class)->counselorForUser($user->id);
+
+        if (!$counselor) {
+            return redirect()->route('dashboard')->with('error', 'Counselor record not found.');
+        }
+
+        $departmentId = DepartmentIsolationMiddleware::getDepartmentId($request);
+        $structure = app(AcademicStructureRepository::class);
+
+        // The API cannot JOIN, so the department boundary is an explicit student id
+        // list — the same rows the previous INNER JOINs produced.
+        $scopeStudentIds = $departmentId
+            ? $structure->studentIdsInDepartment($departmentId, false)
+            : array_keys($structure->studentPlacements());
+
+        $scopeCounts = $this->getScopeCounts($counselor->id, $scopeStudentIds);
+        $stats = $this->getStatistics($counselor->id, $departmentId);
+
+        // Follow-up counters are shared with the sidebar badges, so the two can
+        // never disagree (memoised per request by the service).
+        $followUps = app(CounselorNavigationService::class)
+            ->followUpCounts($counselor->id, $departmentId);
+
+        return view('counselor.dashboard', [
+            'counselor' => $counselor,
+            'department' => $departmentId ? $structure->department($departmentId) : null,
+
+            'totalCaseload' => $scopeCounts['all'],
+            'openCases' => $scopeCounts['open'],
+            'resolvedCases' => $scopeCounts['resolved'],
+            'overdueFollowUps' => $followUps['overdue'],
+            'upcomingFollowUpCount' => $followUps['upcoming'],
+
+            'criticalCases' => $stats['critical'] ?? 0,
+            'awaitingParent' => $stats['awaiting_parent'] ?? 0,
+            'avgResponseTime' => $stats['avg_response_time'] ?? 0.0,
+            'resolutionRate' => $scopeCounts['all'] > 0
+                ? round(100 * $scopeCounts['resolved'] / $scopeCounts['all'], 1)
+                : 0.0,
+
+            'recentCases' => $this->recentCases($counselor->id, $scopeStudentIds),
+            'upcomingFollowUps' => $this->upcomingFollowUps($counselor->id, $scopeStudentIds),
+        ]);
+    }
+
+    public function cases(Request $request)
+    {
+        $user = Auth::user();
         
-        // Get counselor ID and department ID from request (set by middleware)
         $counselor = DepartmentIsolationMiddleware::getCounselor($request);
         $departmentId = DepartmentIsolationMiddleware::getDepartmentId($request);
         
         if (!$counselor) {
-            $counselor = DB::table('counselors')->where('user_id', $user->id)->first();
+            $counselor = app(StaffRepository::class)->counselorForUser($user->id);
             if (!$counselor) {
                 return redirect()->route('dashboard')->with('error', 'Counselor record not found.');
             }
         }
         
-        // Get filters from request
         $priorityFilter = $request->input('priority', 'all');
         $statusFilter = $request->input('status', 'all');
         $departmentFilter = $request->input('department', 'all');
         $searchFilter = $request->input('search', '');
+
+        // Scope: the dedicated "Open Cases" view (scope=open) vs the full caseload.
+        // Validated against a whitelist so an unknown value can never build raw SQL.
+        $scopeFilter = in_array($request->input('scope'), ['open', 'resolved', 'all'], true)
+            ? (string) $request->input('scope')
+            : 'all';
+
+        $riskLevelFilter = in_array($request->input('risk_level'), ['High', 'Moderate', 'Low'], true)
+            ? (string) $request->input('risk_level')
+            : 'all';
+
+        // Date escalated range (inclusive), normalised to Y-m-d or dropped.
+        $escalatedFrom = $this->normaliseFilterDate($request->input('escalated_from'));
+        $escalatedTo = $this->normaliseFilterDate($request->input('escalated_to'));
+
+        $sortFilter = in_array($request->input('sort'), ['priority', 'escalated_newest', 'escalated_oldest'], true)
+            ? (string) $request->input('sort')
+            : 'priority';
         
-        // Build query for cases - FILTER BY COUNSELOR'S DEPARTMENT
-        $query = DB::table('cases')
-            ->join('students', 'cases.student_id', '=', 'students.id')
-            ->join('users', 'cases.escalated_by', '=', 'users.id')
-            ->leftJoin('counselors', 'cases.counselor_id', '=', 'counselors.id')
-            ->leftJoin('departments', 'counselors.department_id', '=', 'departments.id')
-            ->join('blocks', 'students.block_id', '=', 'blocks.id')
-            ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-            ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-            ->where('cases.counselor_id', $counselor->id)
-            ->select(
-                'cases.*',
-                'students.first_name as student_first_name',
-                'students.last_name as student_last_name',
-                'students.student_number',
-                'users.name as escalated_by_name',
-                'departments.name as department_name',
-                'programs.code as program_code'
-            );
+        $structure = app(AcademicStructureRepository::class);
+        $placements = $structure->studentPlacements();
+        $studentsRepo = app(StudentRepository::class);
+
+        $query = DB::table('cases')->where('cases.counselor_id', $counselor->id);
         
-        // APPLY DEPARTMENT FILTER - Only show cases from the counselor's assigned department
         if ($departmentId) {
-            $query->where('programs.department_id', $departmentId);
+            $query->whereIn('cases.student_id', $structure->studentIdsInDepartment($departmentId, false));
         }
         
-        // Apply filters
         if ($priorityFilter !== 'all') {
             $query->where('cases.priority', $priorityFilter);
         }
@@ -68,156 +133,346 @@ class DashboardController extends Controller
         }
         
         if ($departmentFilter !== 'all') {
-            $query->where('departments.code', $departmentFilter);
+            // departments.code came from the counselor's OWN department via a LEFT
+            // JOIN, so a non-matching code must yield an empty result set.
+            $ownDepartment = $counselor->department_id !== null
+                ? $structure->department($counselor->department_id)
+                : null;
+
+            if (($ownDepartment->code ?? null) !== $departmentFilter) {
+                $query->whereRaw('1 = 0');
+            }
         }
         
         if (!empty($searchFilter)) {
-            $query->where(function($q) use ($searchFilter) {
-                $q->where('students.first_name', 'LIKE', "%{$searchFilter}%")
-                  ->orWhere('students.last_name', 'LIKE', "%{$searchFilter}%")
-                  ->orWhere('students.student_number', 'LIKE', "%{$searchFilter}%");
-            });
+            // The previous LIKE searched the joined student columns. MySQL's default
+            // collation is case-insensitive, which stripos() reproduces for names.
+            $matched = $studentsRepo->all()
+                ->filter(fn ($student) => stripos((string) $student->first_name, $searchFilter) !== false
+                    || stripos((string) $student->last_name, $searchFilter) !== false
+                    || stripos((string) $student->student_number, $searchFilter) !== false)
+                ->pluck('id')
+                ->all();
+
+            $query->whereIn('cases.student_id', $matched);
+        }
+
+        if ($statusFilter === 'all') {
+            if ($scopeFilter === 'open') {
+                $query->whereNotIn('cases.status', ['Resolved', 'Closed']);
+            } elseif ($scopeFilter === 'resolved') {
+                $query->whereIn('cases.status', ['Resolved', 'Closed']);
+            }
+        }
+
+        if ($riskLevelFilter !== 'all') {
+            $query->where('cases.risk_level_at_escalation', $riskLevelFilter);
+        }
+
+        if ($escalatedFrom !== null) {
+            $query->whereDate('cases.escalated_at', '>=', $escalatedFrom);
+        }
+
+        if ($escalatedTo !== null) {
+            $query->whereDate('cases.escalated_at', '<=', $escalatedTo);
         }
         
-        // Get cases
-        $cases = $query->orderByRaw("FIELD(cases.priority, 'Critical', 'High', 'Medium', 'Low')")
-                       ->orderBy('cases.updated_at', 'desc')
-                       ->get();
-        
-        // Get statistics - FILTER BY DEPARTMENT
-        $stats = $this->getStatistics($counselor->id, $departmentId);
-        
-        // Get status distribution for chart - FILTER BY DEPARTMENT
-        $statusDistribution = DB::table('cases')
-            ->join('students', 'cases.student_id', '=', 'students.id')
-            ->join('blocks', 'students.block_id', '=', 'blocks.id')
-            ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-            ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-            ->where('cases.counselor_id', $counselor->id)
-            ->when($departmentId, function($q) use ($departmentId) {
-                return $q->where('programs.department_id', $departmentId);
+        // Get cases — the decorated columns come from the mock API, and
+        // FIELD(cases.priority, ...) is applied as an explicit rank in PHP.
+        $studentIndex = $studentsRepo->keyedById();
+        $userNames = app(StaffRepository::class)->userNameIndex();
+        $caseDepartment = $counselor->department_id !== null
+            ? $structure->department($counselor->department_id)
+            : null;
+        $priorityRank = ['Critical' => 0, 'High' => 1, 'Medium' => 2, 'Low' => 3];
+
+        $cases = $query
+            // Ordering: the existing priority-first ordering by default, or the
+            // escalation date when the counselor explicitly asks for it.
+            ->when(
+                $sortFilter !== 'priority',
+                fn ($q) => $q->orderBy('cases.escalated_at', $sortFilter === 'escalated_oldest' ? 'asc' : 'desc'),
+                fn ($q) => $q->orderBy('cases.updated_at', 'desc')
+            )
+            ->get()
+            ->filter(fn ($case) => isset($placements[(int) $case->student_id]))
+            ->map(function ($case) use ($placements, $studentIndex, $userNames, $caseDepartment) {
+                $placement = $placements[(int) $case->student_id];
+                $student = $studentIndex[(int) $case->student_id] ?? null;
+
+                $decorated = clone $case;
+                $decorated->student_first_name = $student->first_name ?? null;
+                $decorated->student_last_name = $student->last_name ?? null;
+                $decorated->student_number = $student->student_number ?? null;
+                $decorated->escalated_by_name = $userNames[(int) $case->escalated_by] ?? null;
+                $decorated->department_name = $caseDepartment->name ?? null;
+                $decorated->program_code = $placement['program_code'];
+
+                return $decorated;
             })
-            ->select('cases.status', DB::raw('count(*) as count'))
-            ->groupBy('cases.status')
-            ->get();
-        
-        // Get priority distribution for chart - FILTER BY DEPARTMENT
-        $priorityDistribution = DB::table('cases')
-            ->join('students', 'cases.student_id', '=', 'students.id')
-            ->join('blocks', 'students.block_id', '=', 'blocks.id')
-            ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-            ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-            ->where('cases.counselor_id', $counselor->id)
-            ->when($departmentId, function($q) use ($departmentId) {
-                return $q->where('programs.department_id', $departmentId);
+            ->sort(function ($a, $b) use ($priorityRank) {
+                $cmp = ($priorityRank[(string) $a->priority] ?? 9)
+                    <=> ($priorityRank[(string) $b->priority] ?? 9);
+
+                if ($cmp !== 0) {
+                    return $cmp;
+                }
+
+                return strcmp((string) $b->updated_at, (string) $a->updated_at);
             })
-            ->select('cases.priority', DB::raw('count(*) as count'))
-            ->groupBy('cases.priority')
-            ->get();
+            ->values();
         
-        // Get caseload trend (last 6 weeks) - FILTER BY DEPARTMENT
-        $caseloadTrend = DB::table('cases')
-            ->join('students', 'cases.student_id', '=', 'students.id')
-            ->join('blocks', 'students.block_id', '=', 'blocks.id')
-            ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-            ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-            ->where('cases.counselor_id', $counselor->id)
-            ->where('cases.escalated_at', '>=', now()->subWeeks(6))
-            ->when($departmentId, function($q) use ($departmentId) {
-                return $q->where('programs.department_id', $departmentId);
-            })
-            ->select(DB::raw('DATE(cases.escalated_at) as date'), DB::raw('count(*) as count'))
-            ->groupBy(DB::raw('DATE(cases.escalated_at)'))
-            ->orderBy('date', 'asc')
-            ->get();
         
-        // Process cases for display
+        $structure = app(AcademicStructureRepository::class);
+        $scopeStudentIds = $departmentId
+            ? $structure->studentIdsInDepartment($departmentId, false)
+            : array_keys($structure->studentPlacements());
+
+        
         $processedCases = $this->processCases($cases);
         
-        return view('counselor.dashboard', [
+        $scopeCounts = $this->getScopeCounts($counselor->id, $scopeStudentIds);
+        
+        $processedCases = $this->processCases($cases);
+
+        $scopeCounts = $this->getScopeCounts($counselor->id, $scopeStudentIds);
+        
+        return view('counselor.cases', [
             'cases' => $processedCases,
-            'openCases' => $stats['open'] ?? 0,
-            'criticalCases' => $stats['critical'] ?? 0,
-            'awaitingParent' => $stats['awaiting_parent'] ?? 0,
-            'avgResponseTime' => $stats['avg_response_time'] ?? '2.3',
-            'statusDistribution' => $statusDistribution,
-            'priorityDistribution' => $priorityDistribution,
-            'caseloadTrend' => $caseloadTrend,
+            'matchedCases' => $processedCases->count(),
+            'scopeCounts' => $scopeCounts,
+            'scope' => $scopeFilter,
+            'riskLevelFilter' => $riskLevelFilter,
+            'escalatedFrom' => $escalatedFrom,
+            'escalatedTo' => $escalatedTo,
+            'sortFilter' => $sortFilter,
             'counselor' => $counselor,
+            'department' => $departmentId ? $structure->department($departmentId) : null,
+            'departments' => $this->getFilterableDepartments($departmentId),
         ]);
     }
     
+    protected function getScopeCounts(int $counselorId, array $studentIds): array
+    {
+        $base = fn () => DB::table('cases')
+            ->where('cases.counselor_id', $counselorId)
+            ->whereIn('cases.student_id', $studentIds);
+
+        return [
+            'all' => $base()->count(),
+            'open' => $base()->whereNotIn('cases.status', ['Resolved', 'Closed'])->count(),
+            'resolved' => $base()->whereIn('cases.status', ['Resolved', 'Closed'])->count(),
+        ];
+    }
+
+    protected function recentCases(int $counselorId, array $studentIds, int $limit = 6)
+    {
+        $rows = DB::table('cases')
+            ->where('cases.counselor_id', $counselorId)
+            ->whereIn('cases.student_id', $studentIds)
+            ->orderByDesc('cases.escalated_at')
+            ->orderByDesc('cases.id')
+            ->limit($limit)
+            ->get([
+                'cases.id',
+                'cases.student_id',
+                'cases.status',
+                'cases.priority',
+                'cases.risk_level_at_escalation',
+                'cases.escalated_at',
+            ]);
+
+        return $this->decorateCaseRows($rows);
+    }
+
+    protected function upcomingFollowUps(int $counselorId, array $studentIds, int $limit = 8)
+    {
+        $caseIds = DB::table('cases')
+            ->where('cases.counselor_id', $counselorId)
+            ->whereIn('cases.student_id', $studentIds)
+            ->whereNotIn('cases.status', ['Resolved', 'Closed'])
+            ->pluck('cases.id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        if ($caseIds === []) {
+            return collect([]);
+        }
+
+        $sessions = DB::table('case_sessions')
+            ->whereIn('case_id', $caseIds)
+            ->whereNotNull('follow_up_date')
+            ->whereDate('follow_up_date', '>=', now()->toDateString())
+            ->whereDate('follow_up_date', '<=', now()->addDays(7)->toDateString())
+            ->orderBy('follow_up_date')
+            ->get(['case_id', 'follow_up_date', 'session_type'])
+            ->unique('case_id')
+            ->take($limit)
+            ->values();
+
+        if ($sessions->isEmpty()) {
+            return collect([]);
+        }
+
+        $cases = DB::table('cases')
+            ->whereIn('id', $sessions->pluck('case_id')->all())
+            ->get(['id', 'student_id', 'priority', 'status'])
+            ->keyBy('id');
+
+        $students = app(StudentRepository::class)->keyedById();
+
+        return $sessions->map(function ($session) use ($cases, $students) {
+            $case = $cases[(int) $session->case_id] ?? null;
+            $student = $case ? ($students[(int) $case->student_id] ?? null) : null;
+
+            return (object) [
+                'case_id' => (int) $session->case_id,
+                'student_name' => $student
+                    ? trim(((string) ($student->first_name ?? '') . ' ' . (string) ($student->last_name ?? '')))
+                    : 'Unknown student',
+                'student_number' => $student->student_number ?? null,
+                'priority' => $case->priority ?? 'Low',
+                'status' => $case->status ?? 'New',
+                'follow_up_date' => $session->follow_up_date,
+                'follow_up_label' => \Carbon\Carbon::parse($session->follow_up_date)->format('M d, Y'),
+                'days_until' => max(0, (int) now()->startOfDay()
+                    ->diffInDays(\Carbon\Carbon::parse($session->follow_up_date)->startOfDay(), false)),
+                'session_type' => $session->session_type,
+            ];
+        })->values();
+    }
+
+    protected function decorateCaseRows($rows)
+    {
+        if ($rows->isEmpty()) {
+            return collect([]);
+        }
+
+        $students = app(StudentRepository::class)->keyedById();
+        $placements = app(AcademicStructureRepository::class)->studentPlacements();
+
+        return $rows
+            ->filter(fn ($row) => isset($placements[(int) $row->student_id]))
+            ->map(function ($row) use ($students, $placements) {
+                $student = $students[(int) $row->student_id] ?? null;
+                $placement = $placements[(int) $row->student_id];
+
+                $name = trim(((string) ($student->first_name ?? '')) . ' ' . ((string) ($student->last_name ?? '')));
+
+                $decorated = clone $row;
+                $decorated->student_name = $name !== '' ? $name : 'Unknown student';
+                $decorated->student_number = $student->student_number ?? null;
+                $decorated->program_code = $placement['program_code'] ?? null;
+                $decorated->escalated_label = $row->escalated_at
+                    ? \Carbon\Carbon::parse($row->escalated_at)->format('M d, Y')
+                    : 'N/A';
+
+                return $decorated;
+            })
+            ->values();
+    }
+
+    protected function normaliseFilterDate($value): ?string
+    {
+        if ($value === null || trim((string) $value) === '') {
+            return null;
+        }
+
+        try {
+            return \Carbon\Carbon::parse((string) $value)->toDateString();
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
     public function show(Request $request, $caseId)
     {
-        // Check if case belongs to counselor's department
         $departmentId = DepartmentIsolationMiddleware::getDepartmentId($request);
         
-        // Get case details
-        $query = DB::table('cases')
-            ->join('students', 'cases.student_id', '=', 'students.id')
-            ->join('users', 'cases.escalated_by', '=', 'users.id')
-            ->leftJoin('counselors', 'cases.counselor_id', '=', 'counselors.id')
-            ->leftJoin('departments', 'counselors.department_id', '=', 'departments.id')
-            ->join('blocks', 'students.block_id', '=', 'blocks.id')
-            ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-            ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-            ->where('cases.id', $caseId)
-            ->select(
-                'cases.*',
-                'students.id as student_id',
-                'students.first_name as student_first_name',
-                'students.last_name as student_last_name',
-                'students.student_number',
-                'students.email as student_email',
-                'users.name as escalated_by_name',
-                'departments.name as department_name',
-                'programs.code as program_code'
-            );
-        
-        // Apply department filter if counselor has a department
-        if ($departmentId) {
-            $query->where('programs.department_id', $departmentId);
+        $structure = app(AcademicStructureRepository::class);
+        $case = DB::table('cases')->where('id', $caseId)->first();
+
+        if ($case !== null && $structure->isStudentPlaced($case->student_id)) {
+            $placement = $structure->studentPlacements()[(int) $case->student_id];
+
+            if ($departmentId && $placement['department_id'] !== (int) $departmentId) {
+                $case = null;
+            } else {
+                $student = app(StudentRepository::class)->find($case->student_id);
+
+                $caseCounselor = app(StaffRepository::class)->counselor($case->counselor_id);
+                $department = $caseCounselor !== null
+                    ? $structure->department($caseCounselor->department_id)
+                    : null;
+
+                $case->student_id = (int) $case->student_id;
+                $case->student_first_name = $student->first_name ?? null;
+                $case->student_last_name = $student->last_name ?? null;
+                $case->student_number = $student->student_number ?? null;
+                $case->student_email = $student->email ?? null;
+                $case->escalated_by_name = app(StaffRepository::class)->userName($case->escalated_by);
+                $case->department_name = $department->name ?? null;
+                $case->program_code = $placement['program_code'];
+            }
+        } else {
+            $case = null;
         }
-        
-        $case = $query->first();
         
         if (!$case) {
             return redirect()->route('counselor.dashboard')->with('error', 'Case not found or you do not have access to it.');
         }
         
-        // Get student details
         $student = $this->getStudentDetails($case->student_id);
         
-        // Get session history
         $sessions = DB::table('case_sessions')
             ->where('case_id', $caseId)
             ->orderBy('session_date', 'desc')
             ->get();
         
-        // Get parent information
-        $parents = DB::table('parents')
-            ->where('student_id', $case->student_id)
-            ->get();
+        $parents = app(ParentRepository::class)->forStudent($case->student_id);
         
-        // Get risk history for effectiveness tracking
-        $riskHistory = DB::table('risk_scores')
-            ->where('student_id', $case->student_id)
-            ->where('school_year', '2024-2025')
-            ->orderByRaw("FIELD(grading_period, 'Prelim', 'Midterm', 'Semifinal', 'Finals')")
-            ->get();
+        // Get risk history for effectiveness tracking — risk_scores stays local and
+        // the FIELD() ordering is applied in PHP by the repository.
+        $riskHistory = app(RiskScoreRepository::class)->allForStudent($case->student_id, '2024-2025');
         
-        // Calculate improvement
         $improvement = $this->calculateImprovement($riskHistory, $case->risk_score_at_escalation);
         
-        // Get next period
-        $nextPeriod = $this->getNextPeriod();
-        
-        // Get escalation notes
         $escalation = DB::table('escalations')
             ->where('student_id', $case->student_id)
             ->where('case_id', $caseId)
             ->first();
-        
+
+        $currentPeriod = $escalation->grading_period ?? $this->getCurrentPeriod();
+        $nextPeriod = $this->getNextPeriod($currentPeriod);
+        $schoolYear = $case->school_year ?: '2024-2025';
+
+        $forwardedRecommendation = $this->buildForwardedRecommendation($case);
+
+        $currentRiskRow = DB::table('risk_scores')
+            ->where('student_id', $case->student_id)
+            ->where('grading_period', $currentPeriod)
+            ->where('school_year', $schoolYear)
+            ->first()
+            ?? $riskHistory->last();
+
+        $currentRiskScore = $currentRiskRow->risk_score ?? null;
+        $currentRiskLevel = $currentRiskRow->risk_level ?? 'N/A';
+
+        $riskFactors = $this->recommendationText->factors($currentRiskRow->risk_factors ?? null);
+
+        // A forwarded recommendation always names what it is based on, so it is a
+        // legitimate fallback when the score row carries no factors.
+        if ($riskFactors === [] && $forwardedRecommendation !== null) {
+            $riskFactors = $this->recommendationText->factors($forwardedRecommendation->risk_factors ?? null);
+        }
+
+        $riskTrend = $this->buildRiskTrend($riskHistory);
+
+        // 4. per-subject grades for this period + average (mock API :3000)
+        $grades = $this->buildGradeSummary($case->student_id, $currentPeriod, $schoolYear);
+
+        // 5. attendance rate, absences, lates and excused (mock API :3000)
+        $attendance = $this->buildAttendanceSummary($case->student_id, $currentPeriod, $schoolYear);
         return view('counselor.case', [
             'case' => $case,
             'student' => $student,
@@ -226,8 +481,17 @@ class DashboardController extends Controller
             'riskHistory' => $riskHistory,
             'improvement' => $improvement,
             'nextPeriod' => $nextPeriod,
+            'currentPeriod' => $currentPeriod,
+            'schoolYear' => $schoolYear,
             'escalationNotes' => $escalation->notes ?? null,
-            'currentRisk' => $riskHistory->last()->risk_level ?? 'N/A',
+            'escalationPeriod' => $escalation->grading_period ?? null,
+            'currentRisk' => $currentRiskLevel,
+            'currentRiskScore' => $currentRiskScore,
+            'forwardedRecommendation' => $forwardedRecommendation,
+            'riskFactors' => $riskFactors,
+            'riskTrend' => $riskTrend,
+            'grades' => $grades,
+            'attendance' => $attendance,
         ]);
     }
     
@@ -235,58 +499,53 @@ class DashboardController extends Controller
 {
     $request->validate([
         'session_date' => 'required|date',
-        'session_type' => 'required|in:In-person,Phone,Virtual,Parent Meeting',
+        'session_type' => 'required|in:In-person,Phone,Phone Call,Virtual,Email,Parent Meeting',
         'notes' => 'required|string|min:5',
         'action_taken' => 'nullable|string',
         'follow_up_date' => 'nullable|date|after:session_date',
         'status_after_session' => 'required|in:New,In Progress,Awaiting Parent,Awaiting Student,Referred,Resolved,Closed,Reopened',
     ]);
 
-    // Get case to get student_id
     $case = DB::table('cases')->where('id', $caseId)->first();
     if (!$case) {
         return redirect()->back()->with('error', 'Case not found.');
     }
 
-    // Insert session
-    DB::table('case_sessions')->insert([
-        'case_id' => $caseId,
-        'session_date' => $request->session_date,
-        'session_type' => $request->session_type,
-        'notes' => $request->notes,
-        'action_taken' => $request->action_taken,
-        'follow_up_date' => $request->follow_up_date,
-        'status_after_session' => $request->status_after_session,
-        'created_at' => now(),
-        'updated_at' => now(),
-    ]);
-
-    // Update case status
-    DB::table('cases')
-        ->where('id', $caseId)
-        ->update([
-            'status' => $request->status_after_session,
+    DB::transaction(function () use ($caseId, $request) {
+        DB::table('case_sessions')->insert([
+            'case_id' => $caseId,
+            'session_date' => $request->session_date,
+            'session_type' => $request->session_type,
+            'notes' => $request->notes,
+            'action_taken' => $request->action_taken,
+            'follow_up_date' => $request->follow_up_date,
+            'status_after_session' => $request->status_after_session,
+            'created_at' => now(),
             'updated_at' => now(),
         ]);
 
-    // ============================================================
-    // CREATE STUDENT ALERT - NEW SESSION LOGGED
-    // ============================================================
+        DB::table('cases')
+            ->where('id', $caseId)
+            ->update([
+                'status' => $request->status_after_session,
+                'updated_at' => now(),
+            ]);
+    });
+
     $this->createStudentAlert(
         $case->student_id,
         'counselor_update',
         'info',
-        'Your guidance counselor has logged a new session: ' . $request->session_type . ' on ' . date('M d, Y', strtotime($request->session_date)),
+        'Your guidance counselor has updated your case.',
         $request->grading_period ?? 'Midterm'
     );
 
-    // Also create a more specific alert based on the action
     if (!empty($request->action_taken)) {
         $this->createStudentAlert(
             $case->student_id,
             'counselor_action',
             'info',
-            'Action taken: ' . $request->action_taken,
+            'Your guidance counselor has taken action on your case.',
             $request->grading_period ?? 'Midterm'
         );
     }
@@ -294,52 +553,43 @@ class DashboardController extends Controller
     return redirect()->back()->with('success', 'Session logged successfully.');
 }
     
-    /**
-     * Mark a case as resolved.
-     * FIXED: Updates existing case instead of creating a new one.
-     */
     public function resolve(Request $request, $caseId)
 {
     $request->validate([
         'resolved_reason' => 'required|string|min:10',
     ]);
 
-    // Get case to get student_id
     $case = DB::table('cases')->where('id', $caseId)->first();
     if (!$case) {
         return redirect()->back()->with('error', 'Case not found.');
     }
 
-    // Check if case is already resolved or closed
     if (in_array($case->status, ['Resolved', 'Closed'])) {
         return redirect()->back()->with('warning', 'This case is already resolved or closed.');
     }
 
-    // UPDATE the existing case
-    DB::table('cases')
-        ->where('id', $caseId)
-        ->update([
-            'status' => 'Resolved',
-            'resolved_at' => now(),
-            'resolved_reason' => $request->resolved_reason,
+    DB::transaction(function () use ($caseId, $request) {
+        DB::table('cases')
+            ->where('id', $caseId)
+            ->update([
+                'status' => 'Resolved',
+                'resolved_at' => now(),
+                'resolved_reason' => $request->resolved_reason,
+                'updated_at' => now(),
+            ]);
+
+        DB::table('case_sessions')->insert([
+            'case_id' => $caseId,
+            'session_date' => now(),
+            'session_type' => 'Virtual',
+            'notes' => 'Case resolved. Reason: ' . $request->resolved_reason,
+            'action_taken' => 'Case marked as resolved',
+            'status_after_session' => 'Resolved',
+            'created_at' => now(),
             'updated_at' => now(),
         ]);
+    });
 
-    // Log a session note for the resolution
-    DB::table('case_sessions')->insert([
-        'case_id' => $caseId,
-        'session_date' => now(),
-        'session_type' => 'Virtual',
-        'notes' => 'Case resolved. Reason: ' . $request->resolved_reason,
-        'action_taken' => 'Case marked as resolved',
-        'status_after_session' => 'Resolved',
-        'created_at' => now(),
-        'updated_at' => now(),
-    ]);
-
-    // ============================================================
-    // CREATE STUDENT ALERT - CASE RESOLVED
-    // ============================================================
     $this->createStudentAlert(
         $case->student_id,
         'case_resolved',
@@ -351,77 +601,74 @@ class DashboardController extends Controller
     return redirect()->back()->with('success', 'Case marked as resolved successfully.');
 }
     
-    /**
-     * Reopen a resolved or closed case.
-     * FIXED: Properly closes old case and creates a new reopened case.
-     */
     public function reopen(Request $request, $caseId)
 {
     $request->validate([
         'reopen_reason' => 'required|string|min:10',
     ]);
 
-    // Get existing case
     $existingCase = DB::table('cases')->where('id', $caseId)->first();
     if (!$existingCase) {
         return redirect()->back()->with('error', 'Case not found.');
     }
 
-    // Check if case is already reopened
     if ($existingCase->status === 'Reopened') {
         return redirect()->back()->with('warning', 'This case is already reopened.');
     }
 
-    // Check if case is resolved or closed before reopening
     if (!in_array($existingCase->status, ['Resolved', 'Closed'])) {
         return redirect()->back()->with('warning', 'Only resolved or closed cases can be reopened.');
     }
 
-    // Mark current case as Closed
-    DB::table('cases')
-        ->where('id', $caseId)
-        ->update([
-            'status' => 'Closed',
+    $newCaseId = DB::transaction(function () use ($caseId, $existingCase, $request) {
+        DB::table('cases')
+            ->where('id', $caseId)
+            ->update([
+                'status' => 'Closed',
+                'updated_at' => now(),
+            ]);
+
+        $newCaseId = DB::table('cases')->insertGetId([
+            'student_id' => $existingCase->student_id,
+            'counselor_id' => $existingCase->counselor_id,
+            'escalated_by' => $existingCase->escalated_by,
+            'escalated_at' => now(),
+            'school_year' => $existingCase->school_year,
+            'semester' => $existingCase->semester,
+            'priority' => $this->recalculatePriority($existingCase->student_id),
+            'status' => 'Reopened',
+            'risk_level_at_escalation' => $this->getCurrentRiskLevel($existingCase->student_id),
+            'risk_score_at_escalation' => $this->getCurrentRiskScore($existingCase->student_id),
+                // Carry the forwarded recommendation forward: a reopened case is the
+                // same intervention continuing, so the counselor keeps its context.
+                'intervention_recommendation' => $existingCase->intervention_recommendation ?? null,
+                'intervention_included' => (bool) ($existingCase->intervention_included ?? false),
+                'intervention_edited' => (bool) ($existingCase->intervention_edited ?? false),
+                'intervention_source_id' => $existingCase->intervention_source_id ?? null,
+            'reopened_from_case_id' => $caseId,
+            'created_at' => now(),
             'updated_at' => now(),
         ]);
 
-    // Create NEW case as reopened
-    $newCaseId = DB::table('cases')->insertGetId([
-        'student_id' => $existingCase->student_id,
-        'counselor_id' => $existingCase->counselor_id,
-        'escalated_by' => $existingCase->escalated_by,
-        'escalated_at' => now(),
-        'school_year' => $existingCase->school_year,
-        'semester' => $existingCase->semester,
-        'priority' => $this->recalculatePriority($existingCase->student_id),
-        'status' => 'Reopened',
-        'risk_level_at_escalation' => $this->getCurrentRiskLevel($existingCase->student_id),
-        'risk_score_at_escalation' => $this->getCurrentRiskScore($existingCase->student_id),
-        'reopened_from_case_id' => $caseId,
-        'created_at' => now(),
-        'updated_at' => now(),
-    ]);
+        DB::table('case_sessions')->insert([
+            'case_id' => $newCaseId,
+            'session_date' => now(),
+            'session_type' => 'Virtual',
+            'notes' => 'Case reopened. Reason: ' . $request->reopen_reason,
+            'action_taken' => 'Case reopened for further intervention',
+            'status_after_session' => 'Reopened',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
 
-    // Log the reopening session
-    DB::table('case_sessions')->insert([
-        'case_id' => $newCaseId,
-        'session_date' => now(),
-        'session_type' => 'Virtual',
-        'notes' => 'Case reopened. Reason: ' . $request->reopen_reason,
-        'action_taken' => 'Case reopened for further intervention',
-        'status_after_session' => 'Reopened',
-        'created_at' => now(),
-        'updated_at' => now(),
-    ]);
+        return $newCaseId;
+    });
 
-    // ============================================================
-    // CREATE STUDENT ALERT - CASE REOPENED
-    // ============================================================
     $this->createStudentAlert(
         $existingCase->student_id,
         'case_reopened',
         'warning',
-        'Your case has been reopened. Reason: ' . $request->reopen_reason,
+        '⚠️ Your case has been reopened. Reason: ' . $request->reopen_reason,
         $request->grading_period ?? 'Midterm'
     );
 
@@ -434,7 +681,6 @@ class DashboardController extends Controller
         'priority' => 'required|in:Critical,High,Medium,Low',
     ]);
 
-    // Get case to get student_id
     $case = DB::table('cases')->where('id', $caseId)->first();
     if (!$case) {
         return redirect()->back()->with('error', 'Case not found.');
@@ -450,9 +696,6 @@ class DashboardController extends Controller
             'updated_at' => now(),
         ]);
 
-    // ============================================================
-    // CREATE STUDENT ALERT - PRIORITY CHANGED
-    // ============================================================
     $severity = match($newPriority) {
         'Critical' => 'critical',
         'High' => 'high',
@@ -477,7 +720,6 @@ class DashboardController extends Controller
         'status' => 'required|in:New,In Progress,Awaiting Parent,Awaiting Student,Referred,Resolved,Closed,Reopened',
     ]);
 
-    // Get case to get student_id
     $case = DB::table('cases')->where('id', $caseId)->first();
     if (!$case) {
         return redirect()->back()->with('error', 'Case not found.');
@@ -493,9 +735,6 @@ class DashboardController extends Controller
             'updated_at' => now(),
         ]);
 
-    // ============================================================
-    // CREATE STUDENT ALERT - STATUS CHANGED
-    // ============================================================
     $severity = match($newStatus) {
         'Resolved' => 'success',
         'Reopened' => 'warning',
@@ -511,24 +750,22 @@ class DashboardController extends Controller
         $request->grading_period ?? 'Midterm'
     );
 
-    // Special alert for Resolved status
     if ($newStatus === 'Resolved') {
         $this->createStudentAlert(
             $case->student_id,
             'case_resolved',
             'success',
-            '🎉 Your case has been marked as Resolved! Please continue to monitor your progress.',
+            '🎉 Your case has been resolved!',
             $request->grading_period ?? 'Midterm'
         );
     }
 
-    // Special alert for Reopened status
     if ($newStatus === 'Reopened') {
         $this->createStudentAlert(
             $case->student_id,
             'case_reopened',
             'warning',
-            'Your case has been reopened. Please check with your guidance counselor for next steps.',
+            '⚠️ Your case has been reopened.',
             $request->grading_period ?? 'Midterm'
         );
     }
@@ -540,61 +777,85 @@ class DashboardController extends Controller
     {
         $stats = [];
         
-        // Build base query with department filter
+        $structure = app(AcademicStructureRepository::class);
+        $scopeStudentIds = $departmentId
+            ? $structure->studentIdsInDepartment($departmentId, false)
+            : array_keys($structure->studentPlacements());
+
         $baseQuery = DB::table('cases')
-            ->join('students', 'cases.student_id', '=', 'students.id')
-            ->join('blocks', 'students.block_id', '=', 'blocks.id')
-            ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-            ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-            ->where('cases.counselor_id', $counselorId);
+            ->where('cases.counselor_id', $counselorId)
+            ->whereIn('cases.student_id', $scopeStudentIds);
         
-        // Apply department filter if provided
-        if ($departmentId) {
-            $baseQuery->where('programs.department_id', $departmentId);
-        }
-        
-        // Open cases
         $stats['open'] = (clone $baseQuery)
             ->whereNotIn('cases.status', ['Resolved', 'Closed'])
             ->count();
         
-        // Critical cases
         $stats['critical'] = (clone $baseQuery)
             ->where('cases.priority', 'Critical')
             ->whereNotIn('cases.status', ['Resolved', 'Closed'])
             ->count();
         
-        // Awaiting parent
         $stats['awaiting_parent'] = (clone $baseQuery)
             ->where('cases.status', 'Awaiting Parent')
             ->count();
         
-        // Average response time (placeholder)
-        $stats['avg_response_time'] = '2.3';
+        $responded = DB::table('case_sessions')
+            ->join('cases', 'case_sessions.case_id', '=', 'cases.id')
+            ->where('cases.counselor_id', $counselorId)
+            ->whereIn('cases.student_id', $scopeStudentIds)
+            ->select('cases.id', 'cases.escalated_at', DB::raw('MIN(case_sessions.session_date) as first_session'))
+            ->groupBy('cases.id', 'cases.escalated_at')
+            ->get();
+
+        $responseDays = $responded->map(function ($row) {
+            if (!$row->first_session || !$row->escalated_at) {
+                return null;
+            }
+
+            // Signed so that a session logged after the escalation counts
+            // positively; a same-day contact contributes 0.
+            return max(0, (int) \Carbon\Carbon::parse($row->escalated_at)
+                ->diffInDays(\Carbon\Carbon::parse($row->first_session), false));
+        })->filter(fn ($days) => $days !== null);
+
+        $stats['avg_response_time'] = $responseDays->isNotEmpty()
+            ? round($responseDays->avg(), 1)
+            : 0.0;
         
         return $stats;
     }
     
     protected function processCases($cases)
     {
+        if ($cases->isEmpty()) {
+            return collect([]);
+        }
+
+        $caseIds = $cases->pluck('id')->all();
+
+        $lastSessions = DB::table('case_sessions')
+            ->whereIn('case_id', $caseIds)
+            ->select('case_id', DB::raw('MAX(session_date) as last_date'))
+            ->groupBy('case_id')
+            ->get()
+            ->pluck('last_date', 'case_id');
+
+        $followUps = DB::table('case_sessions')
+            ->whereIn('case_id', $caseIds)
+            ->where('follow_up_date', '>=', now()->toDateString())
+            ->select('case_id', DB::raw('MIN(follow_up_date) as next_date'))
+            ->groupBy('case_id')
+            ->get()
+            ->pluck('next_date', 'case_id');
+
+        $effectiveness = $this->buildEffectivenessMap($cases);
+
         $processed = [];
         
         foreach ($cases as $case) {
-            // Get last session date
-            $lastSession = DB::table('case_sessions')
-                ->where('case_id', $case->id)
-                ->orderBy('session_date', 'desc')
-                ->first();
-            
-            // Get follow-up date
-            $followUp = DB::table('case_sessions')
-                ->where('case_id', $case->id)
-                ->where('follow_up_date', '>=', now())
-                ->orderBy('follow_up_date', 'asc')
-                ->first();
-            
-            // Calculate improvement
-            $improvement = $this->calculateCaseImprovement($case->student_id);
+            $lastSessionDate = $lastSessions[$case->id] ?? null;
+            $followUpDate = $followUps[$case->id] ?? null;
+            $improvement = $effectiveness[$case->id] ?? null;
             
             $processed[] = (object) [
                 'id' => $case->id,
@@ -603,8 +864,8 @@ class DashboardController extends Controller
                 'priority' => $case->priority,
                 'status' => $case->status,
                 'risk_level' => $case->risk_level_at_escalation,
-                'last_session_date' => $lastSession ? date('M d, Y', strtotime($lastSession->session_date)) : 'No sessions',
-                'follow_up_date' => $followUp ? date('M d, Y', strtotime($followUp->follow_up_date)) : null,
+                'last_session_date' => $lastSessionDate ? date('M d, Y', strtotime((string) $lastSessionDate)) : 'No sessions',
+                'follow_up_date' => $followUpDate ? date('M d, Y', strtotime((string) $followUpDate)) : null,
                 'improvement' => $improvement,
                 'escalated_at' => $case->escalated_at,
             ];
@@ -615,25 +876,24 @@ class DashboardController extends Controller
     
     protected function getStudentDetails($studentId)
     {
-        $student = DB::table('students')
-            ->join('blocks', 'students.block_id', '=', 'blocks.id')
-            ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-            ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-            ->where('students.id', $studentId)
-            ->select(
-                'students.*',
-                'blocks.name as block_name',
-                'year_levels.name as year_level',
-                'programs.code as program_code',
-                'programs.name as program_name'
-            )
-            ->first();
+        $structure = app(AcademicStructureRepository::class);
+        $student = app(StudentRepository::class)->find($studentId);
+        $placement = $student !== null ? $structure->blockPlacement($student->block_id) : null;
         
-        // Get parent info
-        $parent = DB::table('parents')
-            ->where('student_id', $studentId)
-            ->where('is_primary_contact', true)
-            ->first();
+        if ($student === null || $placement === null || $placement['program_id'] === null) {
+            return null;
+        }
+        
+        // Clone: the source row is the memoised API instance and this method adds
+        // the placement and parent_* columns to it.
+        $student = clone $student;
+        $student->block_name = $placement['block_name'] ?? null;
+        $student->year_level = $placement['year_level_name'] ?? null;
+        $student->program_code = $placement['program_code'] ?? null;
+        $student->program_name = $placement['program_name'] ?? null;
+        
+        $parent = app(ParentRepository::class)->forStudent($studentId)
+            ->firstWhere('is_primary_contact', 1);
         
         if ($parent) {
             $student->parent_name = $parent->full_name;
@@ -656,29 +916,171 @@ class DashboardController extends Controller
         return $initialScore - $latestScore;
     }
     
-    protected function calculateCaseImprovement($studentId)
+    protected function buildEffectivenessMap($cases): array
     {
-        $scores = DB::table('risk_scores')
-            ->where('student_id', $studentId)
-            ->orderByRaw("FIELD(grading_period, 'Prelim', 'Midterm', 'Semifinal', 'Finals')")
-            ->get();
-        
-        if ($scores->count() < 2) {
-            return null;
+        $latest = DB::table('risk_scores')
+            ->whereIn('student_id', $cases->pluck('student_id')->unique()->values()->all())
+            ->orderBy('student_id')
+            ->orderByRaw("FIELD(grading_period, 'Prelim', 'Midterm', 'Finals') asc")
+            ->select('student_id', 'risk_score', 'grading_period', 'school_year')
+            ->get()
+            ->groupBy('student_id');
+
+        $map = [];
+
+        foreach ($cases as $case) {
+            $rows = $latest->get($case->student_id);
+            $scoped = $rows
+                ? $rows->where('school_year', $case->school_year)->values()
+                : collect();
+
+            $map[$case->id] = $scoped->isNotEmpty()
+                ? (int) $case->risk_score_at_escalation - (int) $scoped->last()->risk_score
+                : null;
         }
-        
-        $first = $scores->first();
-        $last = $scores->last();
-        
-        return $first->risk_score - $last->risk_score;
+
+        return $map;
     }
     
-    protected function getNextPeriod()
+    protected function getCurrentPeriod(): string
     {
-        $periods = ['Prelim', 'Midterm', 'Semifinal', 'Finals'];
-        $current = 'Midterm';
-        $index = array_search($current, $periods);
-        return $index < count($periods) - 1 ? $periods[$index + 1] : 'Finals';
+        $periods = ['Prelim', 'Midterm', 'Finals'];
+
+        // The academic calendar is served by the mock API.
+        $active = app(CalendarRepository::class)->activePeriod();
+
+        if ($active && in_array($active, $periods, true)) {
+            return $active;
+        }
+
+        // risk_scores stays local; the FIELD() ordering is applied in PHP.
+        $latest = app(RiskScoreRepository::class)->latestPeriod('2024-2025', $periods);
+
+        return in_array($latest, $periods, true) ? $latest : 'Midterm';
+    }
+
+    protected function buildForwardedRecommendation(object $case): ?object
+    {
+        $text = isset($case->intervention_recommendation) ? trim((string) $case->intervention_recommendation) : '';
+
+        if ($text === '') {
+            return null;
+        }
+
+        // Provenance: the generated row this copy came from (it may have been deleted
+        // since, which is why the copy lives on the case).
+        $sourceId = $case->intervention_source_id ?? null;
+        $sourceRow = $sourceId
+            ? DB::table('intervention_recommendations')->where('id', $sourceId)->first()
+            : null;
+
+        return (object) [
+            'text' => (string) $case->intervention_recommendation,
+            'included' => (bool) ($case->intervention_included ?? false),
+            'edited' => (bool) ($case->intervention_edited ?? false),
+            'source_id' => $sourceId,
+            'generated_at' => $sourceRow->generated_at ?? null,
+            'grading_period' => $sourceRow->grading_period ?? null,
+            'actions' => $this->recommendationText->fromText((string) $case->intervention_recommendation),
+        ];
+    }
+
+    protected function buildRiskTrend(Collection $riskHistory): array
+    {
+        $levelValues = ['Low' => 1, 'Moderate' => 2, 'High' => 3];
+        $rows = [];
+        $previous = null;
+
+        foreach ($riskHistory as $row) {
+            $trend = 'stable';
+            $delta = null;
+
+            if ($previous !== null) {
+                $delta = (int) $row->risk_score - (int) $previous->risk_score;
+
+                $currentValue = $levelValues[(string) $row->risk_level] ?? 0;
+                $previousValue = $levelValues[(string) $previous->risk_level] ?? 0;
+
+                if ($currentValue > $previousValue) {
+                    $trend = 'worsening';
+                } elseif ($currentValue < $previousValue) {
+                    $trend = 'improving';
+                }
+            }
+
+            $rows[] = [
+                'period' => (string) $row->grading_period,
+                'score' => (int) $row->risk_score,
+                'level' => (string) $row->risk_level,
+                'delta' => $delta,
+                'trend' => $trend,
+            ];
+
+            $previous = $row;
+        }
+
+        $last = $rows === [] ? null : $rows[array_key_last($rows)];
+
+        return [
+            'rows' => $rows,
+            'overall' => $last['trend'] ?? 'unknown',
+            'delta' => $last['delta'] ?? null,
+        ];
+    }
+
+    protected function buildGradeSummary(int $studentId, string $period, string $schoolYear): array
+    {
+        $rows = app(GradeRepository::class)->subjectGradesForStudent($studentId, $period, $schoolYear);
+        $values = $rows->map(fn ($row) => (float) $row->numerical_grade)->values();
+
+        return [
+            'rows' => $rows,
+            'total' => $rows->count(),
+            'average' => $values->isEmpty() ? null : round((float) $values->avg(), 2),
+            'failing' => $values->filter(fn ($grade) => $grade < 75)->count(),
+            'highest' => $values->isEmpty() ? null : (float) $values->max(),
+            'lowest' => $values->isEmpty() ? null : (float) $values->min(),
+        ];
+    }
+
+    protected function buildAttendanceSummary(int $studentId, string $period, string $schoolYear): array
+    {
+        $attendance = app(AttendanceSummaryRepository::class);
+
+        return [
+            'summary' => $attendance->aggregateForStudent($studentId, $period, $schoolYear),
+            'subjects' => $attendance->subjectSummariesForStudent($studentId, $period, $schoolYear),
+        ];
+    }
+
+    protected function getNextPeriod(?string $current = null): ?string
+    {
+        $periods = ['Prelim', 'Midterm', 'Finals'];
+        $current = $current ?: $this->getCurrentPeriod();
+        $index = array_search($current, $periods, true);
+
+        if ($index === false || $index >= count($periods) - 1) {
+            return null;
+        }
+
+        return $periods[$index + 1];
+    }
+
+    protected function getFilterableDepartments(?int $departmentId)
+    {
+        // departments are served by the mock API.
+        $departments = app(AcademicStructureRepository::class)
+            ->departments()
+            ->sortBy('code')
+            ->values();
+
+        if ($departmentId) {
+            $departments = $departments
+                ->filter(fn ($row) => (int) $row->id === (int) $departmentId)
+                ->values();
+        }
+
+        return $departments;
     }
     
     protected function getCurrentRiskLevel($studentId)
@@ -707,22 +1109,12 @@ class DashboardController extends Controller
         return 'Low';
     }
 
-    // ============================================================
-    // NEW METHODS: Student Alert Creation
-    // ============================================================
 
-    /**
- * Create an alert (flag) for a student.
- */
-/**
-     * Create an alert (flag) for a student.
-     */
     protected function createStudentAlert(int $studentId, string $flagType, string $severity, ?string $message = null, ?string $period = null): void
     {
         $schoolYear = '2024-2025';
         $gradingPeriod = $period ?? 'Midterm';
         
-        // Map flag types to valid ENUM values
         $validFlagTypes = [
             'counselor_update' => 'counselor_update',
             'counselor_action' => 'counselor_action',
@@ -732,7 +1124,6 @@ class DashboardController extends Controller
             'case_reopened' => 'case_reopened',
         ];
         
-        // Map severity to valid ENUM values
         $validSeverities = [
             'critical' => 'critical',
             'high' => 'high',
@@ -747,7 +1138,6 @@ class DashboardController extends Controller
         $finalFlagType = $validFlagTypes[$flagType] ?? 'counselor_update';
         $finalSeverity = $validSeverities[$severity] ?? 'medium';
         
-        // Log the alert creation attempt
         Log::info('Creating student alert', [
             'student_id' => $studentId,
             'flag_type' => $finalFlagType,
@@ -757,7 +1147,6 @@ class DashboardController extends Controller
         ]);
         
         try {
-            // Check if a similar alert already exists for this period
             $exists = DB::table('flags')
                 ->where('student_id', $studentId)
                 ->where('flag_type', $finalFlagType)
@@ -766,7 +1155,6 @@ class DashboardController extends Controller
                 ->exists();
             
             if ($exists) {
-                // Update existing flag instead of creating duplicate
                 DB::table('flags')
                     ->where('student_id', $studentId)
                     ->where('flag_type', $finalFlagType)
@@ -774,6 +1162,7 @@ class DashboardController extends Controller
                     ->where('school_year', $schoolYear)
                     ->update([
                         'is_acknowledged' => false,
+                        'message' => $message,
                         'updated_at' => now(),
                     ]);
                 
@@ -781,7 +1170,6 @@ class DashboardController extends Controller
                 return;
             }
             
-            // Create new flag
             DB::table('flags')->insert([
                 'student_id' => $studentId,
                 'grading_period' => $gradingPeriod,
@@ -789,6 +1177,7 @@ class DashboardController extends Controller
                 'semester' => '1st',
                 'flag_type' => $finalFlagType,
                 'severity' => $finalSeverity,
+                'message' => $message,
                 'is_acknowledged' => false,
                 'consecutive_periods_count' => 1,
                 'created_at' => now(),
@@ -797,7 +1186,6 @@ class DashboardController extends Controller
             
             Log::info('Created new alert', ['student_id' => $studentId, 'flag_type' => $finalFlagType]);
             
-            // Also log to audit
             $this->logActivity('STUDENT_ALERT_CREATED', "Alert created for student $studentId: $flagType ($severity)");
             
         } catch (\Exception $e) {
@@ -810,9 +1198,6 @@ class DashboardController extends Controller
         }
     }
 
-    /**
-     * Log activity to audit logs.
-     */
     protected function logActivity(string $action, string $details): void
     { 
         DB::table('audit_logs')->insert([

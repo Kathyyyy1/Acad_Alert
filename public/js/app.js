@@ -1,12 +1,7 @@
-// ========================================
-// ACADALERT - Main JavaScript
-// Universidad de Dagupan
-// ========================================
 
 document.addEventListener('DOMContentLoaded', function() {
     console.log('AcadAlert v1.0.0 loaded successfully.');
     
-    // Auto-dismiss alerts after 5 seconds
     document.querySelectorAll('.alert:not(.alert-permanent)').forEach(function(alert) {
         setTimeout(function() {
             alert.classList.add('fade');
@@ -17,20 +12,45 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
-// ========================================
-// Sidebar Toggle (Mobile)
-// ========================================
 
-function toggleSidebar() {
+function toggleSidebar(forceOpen) {
     const sidebar = document.getElementById('sidebar-wrapper');
-    if (sidebar) {
-        sidebar.classList.toggle('show');
+    const backdrop = document.getElementById('sidebar-backdrop');
+    const toggle = document.getElementById('sidebarToggleBtn');
+
+    if (!sidebar) {
+        return;
+    }
+
+    const shouldOpen = typeof forceOpen === 'boolean'
+        ? forceOpen
+        : !sidebar.classList.contains('show');
+
+    sidebar.classList.toggle('show', shouldOpen);
+
+    if (backdrop) {
+        backdrop.classList.toggle('show', shouldOpen);
+    }
+
+    if (toggle) {
+        toggle.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
     }
 }
 
-// ========================================
-// Tooltip Initialization
-// ========================================
+document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') {
+        toggleSidebar(false);
+    }
+});
+
+// A resize past the breakpoint must not leave a stale backdrop or `show` class
+// pinned over the (now always-visible) desktop sidebar.
+window.addEventListener('resize', function () {
+    if (window.innerWidth >= 992) {
+        toggleSidebar(false);
+    }
+});
+
 
 document.addEventListener('DOMContentLoaded', function() {
     const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
@@ -39,9 +59,6 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
-// ========================================
-// Confirmation Dialog Helper
-// ========================================
 
 function confirmAction(message, callback) {
     if (confirm(message)) {
@@ -49,9 +66,6 @@ function confirmAction(message, callback) {
     }
 }
 
-// ========================================
-// Toast Notification (Simple)
-// ========================================
 
 function showToast(message, type = 'success') {
     const colors = {
@@ -87,9 +101,6 @@ function showToast(message, type = 'success') {
     }, 4000);
 }
 
-// ========================================
-// Loading Spinner Helper
-// ========================================
 
 function showLoading(element) {
     const original = element.innerHTML;
@@ -105,3 +116,135 @@ function hideLoading(element) {
     element.disabled = false;
     element.innerHTML = element.dataset.original || 'Submit';
 }
+
+
+var AcadAlertTheme = (function () {
+    var STORAGE_KEY = 'acadalerts-theme';
+    var DARK = 'dark';
+    var LIGHT = 'light';
+
+    function normalise(value) {
+        return value === LIGHT ? LIGHT : DARK;
+    }
+
+    function current() {
+        var root = document.documentElement;
+
+        if (root.classList.contains('theme-light')) {
+            return LIGHT;
+        }
+
+        if (root.classList.contains('theme-dark')) {
+            return DARK;
+        }
+
+        return normalise(root.getAttribute('data-bs-theme'));
+    }
+
+    function read() {
+        try {
+            return window.localStorage.getItem(STORAGE_KEY);
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function write(theme) {
+        try {
+            window.localStorage.setItem(STORAGE_KEY, theme);
+        } catch (error) {
+        }
+    }
+
+    function repaintCharts(theme) {
+        try {
+            if (!window.Chart || !window.Chart.defaults) {
+                return;
+            }
+
+            var light = theme === LIGHT;
+            window.Chart.defaults.color = light ? '#666666' : '#adb5bd';
+            window.Chart.defaults.borderColor = light
+                ? 'rgba(0, 0, 0, 0.08)'
+                : 'rgba(255, 255, 255, 0.08)';
+
+            // `chartInstances` comes from public/js/charts/chart-config.js, which
+            // only the chart pages load; typeof keeps this safe everywhere else.
+            if (typeof chartInstances === 'undefined' || !chartInstances) {
+                return;
+            }
+
+            Object.keys(chartInstances).forEach(function (key) {
+                var chart = chartInstances[key];
+
+                if (chart && typeof chart.update === 'function') {
+                    chart.update();
+                }
+            });
+        } catch (error) {
+            // A chart that cannot repaint must never break the toggle.
+        }
+    }
+
+    function syncButton(theme) {
+        var button = document.getElementById('themeToggleBtn');
+
+        if (!button) {
+            return;
+        }
+
+        var dark = theme === DARK;
+        var label = 'Switch to ' + (dark ? 'light' : 'dark') + ' theme';
+
+        button.setAttribute('aria-pressed', dark ? 'true' : 'false');
+        button.setAttribute('aria-label', label);
+        button.setAttribute('title', label);
+    }
+
+    function apply(theme, persist) {
+        var root = document.documentElement;
+        var name = normalise(theme);
+
+        root.setAttribute('data-bs-theme', name);
+        root.classList.remove('theme-dark', 'theme-light');
+        root.classList.add('theme-' + name);
+
+        if (persist) {
+            write(name);
+        }
+
+        syncButton(name);
+        repaintCharts(name);
+
+        return name;
+    }
+
+    function toggle() {
+        return apply(current() === DARK ? LIGHT : DARK, true);
+    }
+
+    function init() {
+        apply(normalise(read()), false);
+
+        window.addEventListener('storage', function (event) {
+            if (event.key === STORAGE_KEY) {
+                apply(normalise(event.newValue), false);
+            }
+        });
+    }
+
+    return {
+        current: current,
+        apply: apply,
+        toggle: toggle,
+        init: init
+    };
+})();
+
+function toggleTheme() {
+    return AcadAlertTheme.toggle();
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    AcadAlertTheme.init();
+});

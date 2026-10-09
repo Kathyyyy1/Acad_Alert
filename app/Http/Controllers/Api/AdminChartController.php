@@ -3,41 +3,37 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Repositories\Api\AcademicStructureRepository;
+use App\Repositories\Local\RiskScoreRepository;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class AdminChartController extends Controller
 {
-    /**
-     * Get risk by department for horizontal bar chart.
-     */
-    public function riskByDepartment(Request $request)
-    {
+    public function riskByDepartment(
+        Request $request,
+        AcademicStructureRepository $structure,
+        RiskScoreRepository $riskScores
+    ) {
         try {
             $period = $request->input('period', 'Midterm');
             $schoolYear = $request->input('school_year', '2024-2025');
 
-            $data = DB::table('departments')
-                ->leftJoin('programs', 'departments.id', '=', 'programs.department_id')
-                ->leftJoin('year_levels', 'programs.id', '=', 'year_levels.program_id')
-                ->leftJoin('blocks', 'year_levels.id', '=', 'blocks.year_level_id')
-                ->leftJoin('students', 'blocks.id', '=', 'students.block_id')
-                ->leftJoin('risk_scores', function($join) use ($period, $schoolYear) {
-                    $join->on('students.id', '=', 'risk_scores.student_id')
-                         ->where('risk_scores.grading_period', $period)
-                         ->where('risk_scores.school_year', $schoolYear);
-                })
-                ->select(
-                    'departments.code as department',
-                    DB::raw('COUNT(DISTINCT students.id) as total'),
-                    DB::raw('COUNT(CASE WHEN risk_scores.risk_level = "High" THEN 1 END) as high_risk'),
-                    DB::raw('COUNT(CASE WHEN risk_scores.risk_level = "Moderate" THEN 1 END) as moderate_risk'),
-                    DB::raw('COUNT(CASE WHEN risk_scores.risk_level = "Low" THEN 1 END) as low_risk')
-                )
-                ->groupBy('departments.code')
-                ->orderBy('departments.code')
-                ->get();
+            $data = [];
+
+            foreach ($structure->departments()->sortBy('code')->values() as $department) {
+                $studentIds = $structure->studentIdsInDepartment($department->id, false);
+                $counts = $riskScores->levelCountsFor($studentIds, $period, $schoolYear);
+
+                $data[] = (object) [
+                    'department' => $department->code,
+                    'total' => count($studentIds),
+                    'high_risk' => $counts['High'],
+                    'moderate_risk' => $counts['Moderate'],
+                    'low_risk' => $counts['Low'],
+                ];
+            }
 
             return response()->json([
                 'success' => true,
@@ -54,9 +50,6 @@ class AdminChartController extends Controller
         }
     }
 
-    /**
-     * Get risk distribution for doughnut chart.
-     */
     public function riskDistribution(Request $request)
     {
         try {
@@ -104,13 +97,10 @@ class AdminChartController extends Controller
         }
     }
 
-    /**
-     * Get institution risk trend for line chart.
-     */
     public function riskTrend(Request $request)
     {
         try {
-            $periods = ['Prelim', 'Midterm', 'Semifinal', 'Finals'];
+            $periods = ['Prelim', 'Midterm', 'Finals'];
             $schoolYear = $request->input('school_year', '2024-2025');
 
             $trend = [];

@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Repositories\Api\StaffRepository;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -11,38 +12,32 @@ class DepartmentIsolationMiddleware
 {
     public function handle(Request $request, Closure $next)
     {
-        // Skip if user is not authenticated
         if (!Auth::check()) {
             return $next($request);
         }
 
         $user = Auth::user();
 
-        // For Master Teachers
-        if ($user->role === 'master_teacher') {
-            $masterTeacher = DB::table('master_teachers')
-                ->where('user_id', $user->id)
-                ->first();
+        // For Academic Heads — the academic_heads collection is served by the mock API.
+        if ($user->role === 'academic_head') {
+            $academicHead = app(StaffRepository::class)->academicHeadForUser($user->id);
 
-            if (!$masterTeacher) {
-                return redirect()->route('dashboard')->with('error', 'Master Teacher record not found.');
+            if (!$academicHead) {
+                return redirect()->route('dashboard')->with('error', 'Academic Head record not found.');
             }
 
-            $request->attributes->set('department_id', $masterTeacher->department_id);
-            $request->attributes->set('master_teacher', $masterTeacher);
+            $request->attributes->set('department_id', $academicHead->department_id);
+            $request->attributes->set('academic_head', $academicHead);
         }
 
-        // FOR COUNSELORS - Added department isolation
+        // FOR COUNSELORS — the counselors collection is served by the mock API.
         if ($user->role === 'guidance_counselor') {
-            $counselor = DB::table('counselors')
-                ->where('user_id', $user->id)
-                ->first();
+            $counselor = app(StaffRepository::class)->counselorForUser($user->id);
 
             if (!$counselor) {
                 return redirect()->route('dashboard')->with('error', 'Counselor record not found.');
             }
 
-            // Store department_id in request for later use
             $request->attributes->set('department_id', $counselor->department_id);
             $request->attributes->set('counselor', $counselor);
         }
@@ -55,9 +50,9 @@ class DepartmentIsolationMiddleware
         return $request->attributes->get('department_id');
     }
 
-    public static function getMasterTeacher(Request $request): ?object
+    public static function getAcademicHead(Request $request): ?object
     {
-        return $request->attributes->get('master_teacher');
+        return $request->attributes->get('academic_head');
     }
 
     public static function getCounselor(Request $request): ?object

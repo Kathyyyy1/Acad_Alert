@@ -12,7 +12,7 @@ return new class extends Migration
             $table->id();
             $table->foreignId('student_id')->constrained()->onDelete('cascade');
             $table->foreignId('subject_id')->constrained()->onDelete('restrict');
-            $table->enum('grading_period', ['Prelim', 'Midterm', 'Semifinal', 'Finals']);
+            $table->enum('grading_period', ['Prelim', 'Midterm', 'Finals']);
             $table->string('school_year', 9);
             $table->enum('semester', ['1st', '2nd']);
             $table->decimal('raw_score', 5, 2);
@@ -20,7 +20,6 @@ return new class extends Migration
             $table->decimal('numerical_grade', 5, 2);
             $table->timestamps();
             
-            // Indexes for performance (25,600 records)
             $table->index('student_id');
             $table->index('subject_id');
             $table->index('grading_period');

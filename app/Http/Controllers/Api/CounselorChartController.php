@@ -3,6 +3,10 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Repositories\Api\AcademicStructureRepository;
+use App\Repositories\Api\StaffRepository;
+use App\Repositories\Local\CaseRepository;
+use App\Repositories\Local\RiskScoreRepository;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -10,13 +14,13 @@ use Illuminate\Support\Facades\Log;
 
 class CounselorChartController extends Controller
 {
-    /**
-     * Get case priority distribution for doughnut chart.
-     */
-    public function priorityDistribution(Request $request)
-    {
+    public function priorityDistribution(
+        Request $request,
+        StaffRepository $staff,
+        AcademicStructureRepository $structure,
+        CaseRepository $caseRepo
+    ) {
         try {
-            // Get the authenticated user
             $user = Auth::user();
             
             if (!$user) {
@@ -26,8 +30,8 @@ class CounselorChartController extends Controller
                 ], 401);
             }
 
-            // Get counselor record
-            $counselor = DB::table('counselors')->where('user_id', $user->id)->first();
+            // Counselor records are served by the mock API now.
+            $counselor = $staff->counselorForUser($user->id);
 
             if (!$counselor) {
                 Log::error('Counselor record not found for user: ' . $user->id);
@@ -37,25 +41,16 @@ class CounselorChartController extends Controller
                 ], 404);
             }
 
-            // Get department filter from middleware
             $departmentId = $request->attributes->get('department_id');
 
-            // Build query
-            $query = DB::table('cases')
-                ->join('students', 'cases.student_id', '=', 'students.id')
-                ->join('blocks', 'students.block_id', '=', 'blocks.id')
-                ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-                ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-                ->where('cases.counselor_id', $counselor->id)
-                ->whereNotIn('cases.status', ['Resolved', 'Closed']);
+            $studentIds = $departmentId
+                ? $structure->studentIdsInDepartment($departmentId, false)
+                : array_keys($structure->studentPlacements());
 
-            if ($departmentId) {
-                $query->where('programs.department_id', $departmentId);
-            }
-
-            $distribution = $query->select('cases.priority', DB::raw('count(*) as count'))
-                ->groupBy('cases.priority')
-                ->get();
+            $distribution = $caseRepo->countBy(
+                $caseRepo->forCounselor((int) $counselor->id, $studentIds, ['Resolved', 'Closed']),
+                'priority'
+            );
 
             $priorityData = [
                 'Critical' => 0,
@@ -64,8 +59,8 @@ class CounselorChartController extends Controller
                 'Low' => 0,
             ];
 
-            foreach ($distribution as $item) {
-                $priorityData[$item->priority] = $item->count;
+            foreach ($distribution as $priority => $count) {
+                $priorityData[$priority] = $count;
             }
 
             $colors = [
@@ -98,13 +93,13 @@ class CounselorChartController extends Controller
         }
     }
 
-    /**
-     * Get case status distribution for bar chart.
-     */
-    public function statusDistribution(Request $request)
-    {
+    public function statusDistribution(
+        Request $request,
+        StaffRepository $staff,
+        AcademicStructureRepository $structure,
+        CaseRepository $caseRepo
+    ) {
         try {
-            // Get the authenticated user
             $user = Auth::user();
             
             if (!$user) {
@@ -114,8 +109,8 @@ class CounselorChartController extends Controller
                 ], 401);
             }
 
-            // Get counselor record
-            $counselor = DB::table('counselors')->where('user_id', $user->id)->first();
+            // Counselor records are served by the mock API now.
+            $counselor = $staff->counselorForUser($user->id);
 
             if (!$counselor) {
                 Log::error('Counselor record not found for user: ' . $user->id);
@@ -125,31 +120,22 @@ class CounselorChartController extends Controller
                 ], 404);
             }
 
-            // Get department filter from middleware
             $departmentId = $request->attributes->get('department_id');
 
-            // Build query
-            $query = DB::table('cases')
-                ->join('students', 'cases.student_id', '=', 'students.id')
-                ->join('blocks', 'students.block_id', '=', 'blocks.id')
-                ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-                ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-                ->where('cases.counselor_id', $counselor->id);
+            $studentIds = $departmentId
+                ? $structure->studentIdsInDepartment($departmentId, false)
+                : array_keys($structure->studentPlacements());
 
-            if ($departmentId) {
-                $query->where('programs.department_id', $departmentId);
-            }
-
-            $distribution = $query->select('cases.status', DB::raw('count(*) as count'))
-                ->groupBy('cases.status')
-                ->get();
+            $distribution = $caseRepo->countBy(
+                $caseRepo->forCounselor((int) $counselor->id, $studentIds),
+                'status'
+            );
 
             $statuses = ['New', 'In Progress', 'Awaiting Parent', 'Awaiting Student', 'Referred', 'Resolved', 'Closed', 'Reopened'];
             $statusData = [];
 
             foreach ($statuses as $status) {
-                $found = $distribution->firstWhere('status', $status);
-                $statusData[$status] = $found ? $found->count : 0;
+                $statusData[$status] = $distribution[$status] ?? 0;
             }
 
             return response()->json([
@@ -173,13 +159,13 @@ class CounselorChartController extends Controller
         }
     }
 
-    /**
-     * Get caseload trend for line chart.
-     */
-    public function caseloadTrend(Request $request)
-    {
+    public function caseloadTrend(
+        Request $request,
+        StaffRepository $staff,
+        AcademicStructureRepository $structure,
+        CaseRepository $caseRepo
+    ) {
         try {
-            // Get the authenticated user
             $user = Auth::user();
             
             if (!$user) {
@@ -189,8 +175,8 @@ class CounselorChartController extends Controller
                 ], 401);
             }
 
-            // Get counselor record
-            $counselor = DB::table('counselors')->where('user_id', $user->id)->first();
+            // Counselor records are served by the mock API now.
+            $counselor = $staff->counselorForUser($user->id);
 
             if (!$counselor) {
                 Log::error('Counselor record not found for user: ' . $user->id);
@@ -200,35 +186,34 @@ class CounselorChartController extends Controller
                 ], 404);
             }
 
-            // Get department filter from middleware
             $departmentId = $request->attributes->get('department_id');
             $weeks = (int) $request->input('weeks', 6);
 
-            // Build query
-            $query = DB::table('cases')
-                ->join('students', 'cases.student_id', '=', 'students.id')
-                ->join('blocks', 'students.block_id', '=', 'blocks.id')
-                ->join('year_levels', 'blocks.year_level_id', '=', 'year_levels.id')
-                ->join('programs', 'year_levels.program_id', '=', 'programs.id')
-                ->where('cases.counselor_id', $counselor->id)
-                ->where('cases.escalated_at', '>=', now()->subWeeks($weeks));
+            $studentIds = $departmentId
+                ? $structure->studentIdsInDepartment($departmentId, false)
+                : array_keys($structure->studentPlacements());
 
-            if ($departmentId) {
-                $query->where('programs.department_id', $departmentId);
+            $cases = $caseRepo->forCounselor(
+                (int) $counselor->id,
+                $studentIds,
+                null,
+                null,
+                now()->subWeeks($weeks)
+            );
+
+            // DATE(cases.escalated_at) + GROUP BY + ORDER BY date, reproduced in PHP.
+            $byDate = [];
+
+            foreach ($cases as $case) {
+                $date = substr((string) $case->escalated_at, 0, 10);
+                $byDate[$date] = ($byDate[$date] ?? 0) + 1;
             }
 
-            $trend = $query->select(
-                    DB::raw('DATE(cases.escalated_at) as date'),
-                    DB::raw('count(*) as count')
-                )
-                ->groupBy(DB::raw('DATE(cases.escalated_at)'))
-                ->orderBy('date', 'asc')
-                ->get();
+            ksort($byDate);
 
-            $dates = $trend->pluck('date')->toArray();
-            $counts = $trend->pluck('count')->toArray();
+            $dates = array_keys($byDate);
+            $counts = array_values($byDate);
 
-            // Pad with empty dates if needed
             $allDates = [];
             $allCounts = [];
             $current = now()->subWeeks($weeks);
@@ -266,13 +251,15 @@ class CounselorChartController extends Controller
         }
     }
 
-    /**
-     * Get student risk trend for line chart in case view.
-     */
-    public function studentRiskTrend(Request $request, int $studentId)
-    {
+    public function studentRiskTrend(
+        Request $request,
+        int $studentId,
+        StaffRepository $staff,
+        AcademicStructureRepository $structure,
+        CaseRepository $caseRepo,
+        RiskScoreRepository $riskScores
+    ) {
         try {
-            // Get the authenticated user
             $user = Auth::user();
             
             if (!$user) {
@@ -284,12 +271,39 @@ class CounselorChartController extends Controller
 
             $schoolYear = $request->input('school_year', '2024-2025');
 
-            $riskHistory = DB::table('risk_scores')
-                ->where('student_id', $studentId)
-                ->where('school_year', $schoolYear)
-                ->orderByRaw("FIELD(grading_period, 'Prelim', 'Midterm', 'Semifinal', 'Finals')")
-                ->select('grading_period', 'risk_score', 'risk_level')
-                ->get();
+            $counselor = $staff->counselorForUser($user->id);
+
+            if (!$counselor) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Counselor record not found.',
+                ], 404);
+            }
+
+            $departmentId = $request->attributes->get('department_id');
+
+            // The previous INNER JOINs also required a valid placement, so an
+            // unplaced student must never be authorised either.
+            $inScope = $structure->isStudentPlaced($studentId)
+                && (!$departmentId || $structure->isStudentInDepartment($studentId, $departmentId));
+
+            $authorized = $inScope
+                && $caseRepo->existsForCounselorAndStudent((int) $counselor->id, $studentId);
+
+            if (!$authorized) {
+                Log::warning('CounselorChartController@studentRiskTrend blocked cross-department access', [
+                    'counselor_id' => $counselor->id,
+                    'student_id' => $studentId,
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Student not found in your caseload.',
+                ], 403);
+            }
+
+            // risk_scores stays local; the FIELD() ordering is applied in PHP.
+            $riskHistory = $riskScores->historyForStudent($studentId, $schoolYear);
 
             $periods = $riskHistory->pluck('grading_period')->toArray();
             $scores = $riskHistory->pluck('risk_score')->toArray();

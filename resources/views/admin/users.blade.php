@@ -15,17 +15,17 @@
 @endsection
 
 @section('content')
-<!-- Filters -->
+<div class="ah-page admin-page" style="--ah-photo: url('{{ asset('images/backgrounds/maincampus03.webp') }}')">
+
 <div class="row">
     <div class="col-12 mb-4">
-        <div class="card">
+        <div class="card ah-glow ah-reveal" style="--ah-i: 0;">
             <div class="card-header bg-primary text-white">
                 <i class="fas fa-filter me-2"></i> Filters
             </div>
             <div class="card-body">
                 <form method="GET" action="{{ route('admin.users.index') }}" id="filterForm">
                     <div class="row g-2">
-                        <!-- Role Filter -->
                         <div class="col-md-2">
                             <label class="form-label small fw-bold">Role</label>
                             <select class="form-select form-select-sm" name="role" id="roleFilter">
@@ -38,7 +38,6 @@
                             </select>
                         </div>
                         
-                        <!-- Department Filter - Dynamic -->
                         <div class="col-md-2">
                             <label class="form-label small fw-bold">Department</label>
                             <select class="form-select form-select-sm" name="department" id="departmentFilter">
@@ -51,7 +50,6 @@
                             </select>
                         </div>
                         
-                        <!-- Program Filter - Dynamic (dependent on department) -->
                         <div class="col-md-2">
                             <label class="form-label small fw-bold">Program</label>
                             <select class="form-select form-select-sm" name="program" id="programFilter">
@@ -64,7 +62,6 @@
                             </select>
                         </div>
                         
-                        <!-- Year Level Filter - Dynamic (dependent on program) -->
                         <div class="col-md-2">
                             <label class="form-label small fw-bold">Year Level</label>
                             <select class="form-select form-select-sm" name="year_level" id="yearLevelFilter">
@@ -77,7 +74,6 @@
                             </select>
                         </div>
                         
-                        <!-- Block Filter - Dynamic (dependent on year level) -->
                         <div class="col-md-2">
                             <label class="form-label small fw-bold">Block</label>
                             <select class="form-select form-select-sm" name="block" id="blockFilter">
@@ -90,7 +86,6 @@
                             </select>
                         </div>
                         
-                        <!-- Search -->
                         <div class="col-md-2">
                             <label class="form-label small fw-bold">Search</label>
                             <div class="d-flex gap-1">
@@ -123,10 +118,9 @@
     </div>
 </div>
 
-<!-- Users Table -->
 <div class="row">
     <div class="col-12 mb-4">
-        <div class="card">
+        <div class="card ah-glow ah-reveal" style="--ah-i: 1;">
             <div class="card-header">
                 <i class="fas fa-users text-primary me-2"></i>
                 Users List
@@ -152,19 +146,19 @@
                                 <td><strong>{{ $user->name }}</strong></td>
                                 <td>{{ $user->email }}</td>
                                 <td>
-                                    <span class="badge {{ $user->role === 'admin' ? 'bg-danger' : ($user->role === 'master_teacher' ? 'bg-primary' : ($user->role === 'guidance_counselor' ? 'bg-success' : 'bg-secondary')) }}">
+                                    <span class="badge {{ $user->role === 'admin' ? 'bg-danger' : ($user->role === 'academic_head' ? 'bg-primary' : ($user->role === 'guidance_counselor' ? 'bg-success' : 'bg-secondary')) }}">
                                         {{ ucfirst(str_replace('_', ' ', $user->role)) }}
                                     </span>
                                 </td>
                                 <td>
                                     @php
                                         $deptCode = 'N/A';
-                                        if ($user->role === 'master_teacher') {
-                                            $dept = DB::table('departments')->where('id', $user->mt_department_id)->first();
-                                            $deptCode = $dept->code ?? 'N/A';
+                                        if ($user->role === 'academic_head') {
+                                            // departments is served by the mock API, so the
+                                            // id -> code map is passed in from the controller.
+                                            $deptCode = $departmentCodes[$user->mt_department_id] ?? 'N/A';
                                         } elseif ($user->role === 'guidance_counselor') {
-                                            $dept = DB::table('departments')->where('id', $user->counselor_department_id)->first();
-                                            $deptCode = $dept->code ?? 'N/A';
+                                            $deptCode = $departmentCodes[$user->counselor_department_id] ?? 'N/A';
                                         } elseif ($user->role === 'student') {
                                             $deptCode = $user->student_department_code ?? 'N/A';
                                         }
@@ -182,7 +176,7 @@
                                         @if($user->block_name)
                                             <span class="badge bg-primary">{{ $user->block_name }}</span>
                                         @endif
-                                    @elseif($user->role === 'master_teacher' || $user->role === 'guidance_counselor')
+                                    @elseif($user->role === 'academic_head' || $user->role === 'guidance_counselor')
                                         <span class="text-muted small">—</span>
                                     @else
                                         <span class="text-muted small">—</span>
@@ -223,7 +217,8 @@
     </div>
 </div>
 
-<!-- Delete Confirmation Modal -->
+</div>
+
 <div class="modal fade" id="deleteModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
@@ -292,9 +287,6 @@
         });
     });
 
-    // ========================================
-    // DYNAMIC DEPENDENT FILTERS
-    // ========================================
     document.addEventListener('DOMContentLoaded', function() {
         const departmentFilter = document.getElementById('departmentFilter');
         const programFilter = document.getElementById('programFilter');
@@ -303,17 +295,14 @@
         const roleFilter = document.getElementById('roleFilter');
         const filterForm = document.getElementById('filterForm');
 
-        // Store original options
         const programOptions = programFilter.innerHTML;
         const yearLevelOptions = yearLevelFilter.innerHTML;
         const blockOptions = blockFilter.innerHTML;
 
-        // Department change → Load programs
         departmentFilter.addEventListener('change', function() {
             const departmentId = this.value;
             
             if (departmentId !== 'all') {
-                // Load programs for this department
                 fetch(`/admin/get-programs/${departmentId}`)
                     .then(response => response.json())
                     .then(data => {
@@ -325,7 +314,6 @@
                             programFilter.appendChild(option);
                         });
                         
-                        // Reset year level and block
                         yearLevelFilter.innerHTML = '<option value="all">All Year Levels</option>';
                         blockFilter.innerHTML = '<option value="all">All Blocks</option>';
                     })
@@ -333,14 +321,12 @@
                         programFilter.innerHTML = programOptions;
                     });
             } else {
-                // Reset to all options
                 programFilter.innerHTML = programOptions;
                 yearLevelFilter.innerHTML = yearLevelOptions;
                 blockFilter.innerHTML = blockOptions;
             }
         });
 
-        // Program change → Load year levels
         programFilter.addEventListener('change', function() {
             const programId = this.value;
             
@@ -356,7 +342,6 @@
                             yearLevelFilter.appendChild(option);
                         });
                         
-                        // Reset block
                         blockFilter.innerHTML = '<option value="all">All Blocks</option>';
                     })
                     .catch(() => {
@@ -368,7 +353,6 @@
             }
         });
 
-        // Year Level change → Load blocks
         yearLevelFilter.addEventListener('change', function() {
             const yearLevelId = this.value;
             
@@ -392,7 +376,6 @@
             }
         });
 
-        // Auto-submit when any filter changes (except search)
         const autoSubmitFilters = [departmentFilter, programFilter, yearLevelFilter, blockFilter, roleFilter];
         autoSubmitFilters.forEach(el => {
             if (el) {
@@ -405,7 +388,6 @@
             }
         });
 
-        // Mark initial state to prevent auto-submit on page load
         document.querySelectorAll('select').forEach(el => {
             el.dataset.initializing = 'true';
             setTimeout(() => {

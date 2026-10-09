@@ -21,6 +21,8 @@
 @endsection
 
 @section('content')
+<div class="ah-page admin-page" style="--ah-photo: url('{{ asset('images/backgrounds/maincampus02.webp') }}')">
+
 @if(session('success'))
     <div class="alert alert-success alert-dismissible fade show" role="alert">
         <i class="fas fa-check-circle me-2"></i> {{ session('success') }}
@@ -35,10 +37,9 @@
     </div>
 @endif
 
-<!-- Departments -->
 <div class="row">
     <div class="col-12 mb-4">
-        <div class="card">
+        <div class="card ah-glow ah-reveal" style="--ah-i: 0;">
             <div class="card-header bg-primary text-white">
                 <i class="fas fa-building me-2"></i> Departments
                 <span class="badge bg-light text-primary ms-2">{{ count($departments) }}</span>
@@ -82,10 +83,9 @@
     </div>
 </div>
 
-<!-- Programs -->
 <div class="row">
     <div class="col-12 mb-4">
-        <div class="card">
+        <div class="card ah-glow ah-reveal" style="--ah-i: 1;">
             <div class="card-header bg-success text-white">
                 <i class="fas fa-graduation-cap me-2"></i> Programs
                 <span class="badge bg-light text-success ms-2">{{ count($programs) }}</span>
@@ -131,10 +131,9 @@
     </div>
 </div>
 
-<!-- Subjects -->
 <div class="row">
     <div class="col-12 mb-4">
-        <div class="card">
+        <div class="card ah-glow ah-reveal" style="--ah-i: 2;">
             <div class="card-header bg-info text-white">
                 <i class="fas fa-book me-2"></i> Subjects
                 <span class="badge bg-light text-info ms-2">{{ count($subjects) }}</span>
@@ -184,7 +183,8 @@
     </div>
 </div>
 
-<!-- Add Department Modal -->
+</div>
+
 <div class="modal fade" id="addDepartmentModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
@@ -217,7 +217,6 @@
     </div>
 </div>
 
-<!-- Add Program Modal -->
 <div class="modal fade" id="addProgramModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
@@ -259,7 +258,6 @@
     </div>
 </div>
 
-<!-- Add Subject Modal -->
 <div class="modal fade" id="addSubjectModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
@@ -321,7 +319,6 @@
     </div>
 </div>
 
-<!-- Delete Confirmation Modal -->
 <div class="modal fade" id="deleteModal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">

@@ -22,8 +22,8 @@ class Block extends Model
         return $this->hasMany(Student::class);
     }
 
-    public function teacherAssignments(): HasMany
+    public function academicHeadAssignments(): HasMany
     {
-        return $this->hasMany(TeacherAssignment::class);
+        return $this->hasMany(AcademicHeadAssignment::class);
     }
 }

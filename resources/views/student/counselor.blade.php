@@ -15,13 +15,28 @@
 @endsection
 
 @section('content')
-<div class="row">
+<div class="ah-page sp-page" style="--ah-photo: url('{{ asset('images/backgrounds/bg_smll_udd.jpg') }}')">
+
+    <div class="sp-welcome ah-reveal" style="--ah-i: 0;">
+        <span class="sp-welcome-icon"><i class="fas fa-user-circle"></i></span>
+        <div class="flex-grow-1">
+            <h2 class="sp-welcome-title">{{ $counselorInfo->name ?? 'Your Guidance Counselor' }}</h2>
+            <p class="sp-welcome-sub">
+                @if($counselorInfo)
+                    Your guidance counselor &middot; {{ $counselorInfo->office_hours ?? 'Mon-Fri, 9:00 AM - 4:00 PM' }}
+                @else
+                    No counselor has been assigned to your department yet
+                @endif
+            </p>
+        </div>
+    </div>
+
+    <div class="row ah-reveal" style="--ah-i: 1;">
     @if($counselorInfo)
-    <!-- Counselor Information -->
     <div class="col-lg-6 mb-4">
-        <div class="card">
-            <div class="card-header bg-primary text-white">
-                <i class="fas fa-user-circle me-2"></i> Your Counselor
+        <div class="card ah-glow">
+            <div class="card-header">
+                <i class="fas fa-user-circle text-primary"></i> Your Counselor
             </div>
             <div class="card-body text-center py-4">
                 <div class="display-1 mb-3">
@@ -56,11 +71,10 @@
         </div>
     </div>
     
-    <!-- Appointment & Resources -->
     <div class="col-lg-6 mb-4">
-        <div class="card">
-            <div class="card-header bg-success text-white">
-                <i class="fas fa-calendar-plus me-2"></i> Schedule Appointment
+        <div class="card ah-glow">
+            <div class="card-header">
+                <i class="fas fa-calendar-plus text-primary"></i> Schedule Appointment
             </div>
             <div class="card-body">
                 <div class="text-center mb-3">
@@ -86,10 +100,9 @@
             </div>
         </div>
         
-        <!-- Resources -->
-        <div class="card mt-4">
-            <div class="card-header bg-warning text-dark">
-                <i class="fas fa-lightbulb me-2"></i> Quick Resources
+        <div class="card mt-4 ah-glow">
+            <div class="card-header">
+                <i class="fas fa-lightbulb text-primary"></i> Quick Resources
             </div>
             <div class="card-body">
                 <div class="list-group">
@@ -108,7 +121,7 @@
     </div>
     @else
     <div class="col-12">
-        <div class="card">
+        <div class="card ah-glow">
             <div class="card-body text-center py-5">
                 <i class="fas fa-user-circle fa-5x text-muted d-block mb-3"></i>
                 <h4>No Counselor Assigned</h4>
@@ -123,14 +136,14 @@
         </div>
     </div>
     @endif
+    </div>
+
 </div>
 @endsection
 
 @push('scripts')
 <script>
     function scheduleAppointment() {
-        // In a real implementation, this would open a form or modal
-        // For now, show a placeholder alert
         alert('Appointment scheduling will be available soon!\n\nPlease visit the Guidance Office in person or call (075) 123-4567 loc. 123 to schedule an appointment.');
     }
 </script>

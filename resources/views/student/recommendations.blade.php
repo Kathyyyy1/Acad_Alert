@@ -15,46 +15,57 @@
 @endsection
 
 @section('content')
-<div class="row">
-    <div class="col-12 mb-4">
-        <div class="card">
-            <div class="card-header bg-primary text-white">
-                <i class="fas fa-lightbulb me-2"></i> 
-                Your Intervention Recommendations
-                <span class="badge bg-light text-primary ms-2">{{ count($recommendations) }}</span>
-            </div>
-            <div class="card-body">
-                @if(count($recommendations) > 0)
-                    @php
-                        $completedCount = 0;
-                        foreach ($recommendations as $rec) {
-                            if ($rec->is_completed) $completedCount++;
-                        }
-                        $pendingCount = count($recommendations) - $completedCount;
-                    @endphp
-                    
-                    <div class="row mb-4">
+@php
+    // Counted once, up here, so the opening strip and the three tiles below can
+    // never disagree about how many recommendations are still pending.
+    $completedCount = collect($recommendations)->where('is_completed', true)->count();
+    $pendingCount   = count($recommendations) - $completedCount;
+@endphp
+
+<div class="ah-page sp-page" style="--ah-photo: url('{{ asset('images/backgrounds/maincampus02.webp') }}')">
+
+    <div class="sp-welcome ah-reveal" style="--ah-i: 0;">
+        <span class="sp-welcome-icon"><i class="fas fa-lightbulb"></i></span>
+        <div class="flex-grow-1">
+            <h2 class="sp-welcome-title">{{ count($recommendations) }} recommendation(s)</h2>
+            <p class="sp-welcome-sub">
+                {{ $pendingCount }} pending completion
+                &middot; {{ $completedCount }} completed
+            </p>
+        </div>
+    </div>
+
+    <div class="row ah-reveal" style="--ah-i: 1;">
+        <div class="col-12 mb-4">
+            <div class="card ah-glow">
+                <div class="card-header">
+                    <i class="fas fa-lightbulb text-primary"></i> Your Intervention Recommendations
+                    <span class="badge bg-light text-primary ms-2">{{ count($recommendations) }}</span>
+                </div>
+                <div class="card-body">
+                    @if(count($recommendations) > 0)
+                    <div class="row mb-4 sp-metrics text-center">
                         <div class="col-md-4">
-                            <div class="card bg-light">
+                            <div class="card bg-light sp-tile">
                                 <div class="card-body text-center">
                                     <h3>{{ count($recommendations) }}</h3>
-                                    <small class="text-muted">Total Recommendations</small>
+                                    <small class="text-muted">Total</small>
                                 </div>
                             </div>
                         </div>
                         <div class="col-md-4">
-                            <div class="card bg-warning">
+                            <div class="card bg-warning sp-tile">
                                 <div class="card-body text-center">
                                     <h3>{{ $pendingCount }}</h3>
-                                    <small class="text-muted">Pending Completion</small>
+                                    <small class="text-muted">Pending</small>
                                 </div>
                             </div>
                         </div>
                         <div class="col-md-4">
-                            <div class="card bg-success text-white">
+                            <div class="card bg-success sp-tile">
                                 <div class="card-body text-center">
                                     <h3>{{ $completedCount }}</h3>
-                                    <small>Completed</small>
+                                    <small class="text-muted">Completed</small>
                                 </div>
                             </div>
                         </div>
@@ -69,15 +80,18 @@
                             <div class="list-group-item {{ $recommendation->is_completed ? 'list-group-item-success' : '' }}">
                                 <div class="d-flex justify-content-between align-items-start">
                                     <div class="flex-grow-1">
-                                        <div class="d-flex align-items-center mb-2">
+                                        <div class="d-flex align-items-center mb-2 flex-wrap gap-2">
                                             <span class="badge bg-{{ $recommendation->is_completed ? 'success' : 'warning' }} me-2">
                                                 {{ $recommendation->is_completed ? 'Completed' : 'Pending' }}
                                             </span>
+                                            @if(!empty($recommendation->grading_period))
+                                                <span class="badge bg-info text-dark me-2">{{ $recommendation->grading_period }}</span>
+                                            @endif
                                             <small class="text-muted">
                                                 Generated: {{ \Carbon\Carbon::parse($recommendation->generated_at)->format('M d, Y') }}
                                             </small>
                                         </div>
-                                        
+
                                         @if($riskFactors)
                                             <div class="mb-2">
                                                 <strong>Risk Factors:</strong>
@@ -86,7 +100,7 @@
                                                 @endforeach
                                             </div>
                                         @endif
-                                        
+
                                         @if($actions)
                                             <div>
                                                 <strong>Recommended Actions:</strong>
@@ -119,19 +133,20 @@
                             </div>
                         @endforeach
                     </div>
-                @else
-                    <div class="text-center text-muted py-4">
-                        <i class="fas fa-lightbulb fa-3x d-block mb-3"></i>
-                        <p>No intervention recommendations available.</p>
-                        <small class="text-muted">Your master teacher or counselor will generate recommendations based on your academic performance.</small>
-                    </div>
-                @endif
+                    @else
+                        <div class="text-center text-muted py-4">
+                            <i class="fas fa-lightbulb fa-3x d-block mb-3"></i>
+                            <p class="mb-1">No intervention recommendations available.</p>
+                            <small class="text-muted">Your academic head or counselor will generate recommendations based on your academic performance.</small>
+                        </div>
+                    @endif
+                </div>
             </div>
         </div>
     </div>
+
 </div>
 
-<!-- Toast Notification -->
 <div id="recommendationToast" style="position: fixed; top: 80px; right: 20px; z-index: 9999; display: none;">
     <div class="toast align-items-center show" role="alert">
         <div class="d-flex">
@@ -166,14 +181,12 @@
                 listItem.classList.add('list-group-item-success');
                 btn.outerHTML = '<span class="badge bg-success">Completed</span>';
                 
-                // Update badge
                 const badge = listItem.querySelector('.badge');
                 if (badge) {
                     badge.className = 'badge bg-success me-2';
                     badge.textContent = 'Completed';
                 }
                 
-                // Update counts
                 showToast('Recommendation marked as completed!');
                 setTimeout(() => window.location.reload(), 1500);
             } else {

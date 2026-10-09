@@ -25,7 +25,6 @@ class ParentsTableSeeder extends Seeder
         $parentCount = 0;
         
         foreach ($students as $student) {
-            // Mother
             $motherName = $this->firstNamesFemale[array_rand($this->firstNamesFemale)] . ' ' . $student->last_name;
             DB::table('parents')->insert([
                 'student_id' => $student->id,
@@ -40,7 +39,6 @@ class ParentsTableSeeder extends Seeder
                 'updated_at' => now(),
             ]);
             
-            // Father
             $fatherName = $this->firstNamesMale[array_rand($this->firstNamesMale)] . ' ' . $student->last_name;
             DB::table('parents')->insert([
                 'student_id' => $student->id,

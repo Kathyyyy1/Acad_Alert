@@ -5,143 +5,170 @@
 @section('page_title', 'Risk Configuration')
 @section('page_actions')
     <div>
-        <button class="btn btn-sm btn-info" onclick="testAIConnection()">
-            <i class="fas fa-robot me-1"></i> Test AI Connection
+        <button class='btn btn-sm btn-info' onclick='testAIConnection()'>
+            <img src='{{ asset('images/logo/acadalert_notxt.png') }}'
+                 alt='' class='me-1' style='height:1em;width:auto;vertical-align:-0.15em;'>
+            Test AI Connection
         </button>
-        <a href="{{ route('admin.dashboard') }}" class="btn btn-sm btn-outline-secondary">
-            <i class="fas fa-arrow-left me-1"></i> Back
+        <a href='{{ route('admin.dashboard') }}' class='btn btn-sm btn-outline-secondary'>
+            <i class='fas fa-arrow-left me-1'></i> Back
         </a>
     </div>
 @endsection
 
 @section('content')
-<div class="row">
-    <div class="col-lg-6 mb-4">
-        <div class="card">
-            <div class="card-header bg-primary text-white">
-                <i class="fas fa-sliders-h me-2"></i> Risk Thresholds
+<div class='ah-page admin-page' style="--ah-photo: url('{{ asset('images/backgrounds/bg_smll_udd.jpg') }}')">
+
+<div class='row'>
+    <div class='col-lg-7 mb-4'>
+        <div class='card ah-glow ah-reveal' style='--ah-i: 0;'>
+            <div class='card-header bg-primary text-white'>
+                <i class='fas fa-sliders-h me-2'></i> Risk Threshold Parameters
             </div>
-            <div class="card-body">
-                <form method="POST" action="{{ route('admin.risk.save') }}">
+            <div class='card-body'>
+                <form method='POST' action='{{ route('admin.risk.save') }}'>
                     @csrf
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">Low Risk (0 to <span id="lowVal">{{ $thresholds->low_threshold ?? 40 }}</span>)</label>
-                        <input type="range" class="form-range" name="low_threshold" 
-                               id="lowThreshold" min="0" max="100" 
-                               value="{{ $thresholds->low_threshold ?? 40 }}"
-                               oninput="document.getElementById('lowVal').textContent = this.value">
+                    <div class='mb-3'>
+                        <label class='form-label fw-bold'>
+                            Low Risk: 0 to <span id='lowVal'>{{ $thresholds->low_threshold }}</span>
+                        </label>
+                        <input type='range' class='form-range' name='low_threshold' id='lowThreshold'
+                               min='0' max='98' value='{{ $thresholds->low_threshold }}'
+                               oninput='syncThresholds()'>
+                        <small class='text-muted'>Scores at or below this value are Low risk.</small>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">Moderate Risk (<span id="modLowVal">{{ $thresholds->low_threshold ?? 40 }}</span> to <span id="modHighVal">{{ $thresholds->moderate_threshold ?? 70 }}</span>)</label>
-                        <div class="row">
-                            <div class="col-6">
-                                <input type="number" class="form-control" name="moderate_low" 
-                                       value="{{ $thresholds->low_threshold ?? 40 }}" readonly>
-                            </div>
-                            <div class="col-6">
-                                <input type="range" class="form-range" name="moderate_threshold" 
-                                       id="moderateThreshold" min="0" max="100" 
-                                       value="{{ $thresholds->moderate_threshold ?? 70 }}"
-                                       oninput="document.getElementById('modHighVal').textContent = this.value">
-                            </div>
-                        </div>
+                    <div class='mb-3'>
+                        <label class='form-label fw-bold'>
+                            Moderate Risk: <span id='modLowVal'>{{ $bands['Moderate'] }}</span>
+                        </label>
+                        <input type='range' class='form-range' name='moderate_threshold' id='moderateThreshold'
+                               min='1' max='99' value='{{ $thresholds->moderate_threshold }}'
+                               oninput='syncThresholds()'>
+                        <small class='text-muted'>Scores above Low and up to this value are Moderate risk.</small>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">High Risk (<span id="highVal">{{ $thresholds->moderate_threshold ?? 70 }}</span> to 100)</label>
-                        <input type="range" class="form-range" name="high_threshold" 
-                               id="highThreshold" min="0" max="100" 
-                               value="{{ $thresholds->high_threshold ?? 71 }}"
-                               oninput="document.getElementById('highVal').textContent = this.value">
+                    <div class='mb-3'>
+                        <label class='form-label fw-bold'>
+                            High Risk: <span id='highVal'>{{ $thresholds->high_threshold }}</span> to 100
+                        </label>
+                        <input type='number' class='form-control' name='high_threshold' id='highThreshold'
+                               min='2' max='100' value='{{ $thresholds->high_threshold }}' readonly>
+                        <small class='text-muted'>
+                            Contiguity is enforced: the High band always begins exactly one point above the
+                            Moderate ceiling, so every score from 0 to 100 is classified.
+                        </small>
                     </div>
                     <hr>
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">Risk Score Weights</label>
-                        <div class="row">
-                            <div class="col-6">
-                                <label class="form-label small">Grade Weight</label>
-                                <input type="number" class="form-control" name="grade_weight" 
-                                       value="{{ $thresholds->grade_weight ?? 0.60 }}" step="0.01" min="0" max="1">
-                            </div>
-                            <div class="col-6">
-                                <label class="form-label small">Attendance Weight</label>
-                                <input type="number" class="form-control" name="attendance_weight" 
-                                       value="{{ $thresholds->attendance_weight ?? 0.40 }}" step="0.01" min="0" max="1">
-                            </div>
-                        </div>
-                        <small class="text-muted">Grade and attendance weights must sum to 1.00 (100%)</small>
-                    </div>
-                    <button type="submit" class="btn btn-primary w-100">
-                        <i class="fas fa-save me-1"></i> Save Configuration
+                    <button type='submit' class='btn btn-primary w-100'>
+                        <i class='fas fa-save me-1'></i> Save Configuration
                     </button>
                 </form>
             </div>
         </div>
-    </div>
-    
-    <div class="col-lg-6 mb-4">
-        <div class="card">
-            <div class="card-header bg-info text-white">
-                <i class="fas fa-info-circle me-2"></i> Current Settings
+    </div>    <div class='col-lg-5 mb-4'>
+        <div class='card mb-4 ah-glow ah-reveal' style='--ah-i: 1;'>
+            <div class='card-header bg-info text-white'>
+                <i class='fas fa-info-circle me-2'></i> Current Settings
             </div>
-            <div class="card-body">
-                <div class="row">
-                    <div class="col-6">
-                        <div class="bg-light p-2 rounded mb-2">
-                            <div class="text-muted small">Low Risk Range</div>
-                            <div class="fw-bold text-success">0 - {{ $thresholds->low_threshold ?? 40 }}</div>
+            <div class='card-body'>
+                <div class='row'>
+                    <div class='col-6'>
+                        <div class='bg-light p-2 rounded mb-2'>
+                            <div class='text-muted small'>Low Risk Range</div>
+                            <div class='fw-bold text-success'>{{ $effectiveBands['Low'] }}</div>
                         </div>
                     </div>
-                    <div class="col-6">
-                        <div class="bg-light p-2 rounded mb-2">
-                            <div class="text-muted small">Moderate Risk Range</div>
-                            <div class="fw-bold text-warning">{{ $thresholds->low_threshold ?? 40 }} - {{ $thresholds->moderate_threshold ?? 70 }}</div>
+                    <div class='col-6'>
+                        <div class='bg-light p-2 rounded mb-2'>
+                            <div class='text-muted small'>Moderate Risk Range</div>
+                            <div class='fw-bold text-warning'>{{ $effectiveBands['Moderate'] }}</div>
                         </div>
                     </div>
-                    <div class="col-6">
-                        <div class="bg-light p-2 rounded mb-2">
-                            <div class="text-muted small">High Risk Range</div>
-                            <div class="fw-bold text-danger">{{ $thresholds->moderate_threshold ?? 70 }} - 100</div>
+                    <div class='col-6'>
+                        <div class='bg-light p-2 rounded mb-2'>
+                            <div class='text-muted small'>High Risk Range</div>
+                            <div class='fw-bold text-danger'>{{ $effectiveBands['High'] }}</div>
                         </div>
                     </div>
-                    <div class="col-6">
-                        <div class="bg-light p-2 rounded mb-2">
-                            <div class="text-muted small">Formula Weights</div>
-                            <div class="fw-bold">Grade: {{ ($thresholds->grade_weight ?? 0.60) * 100 }}% | Attendance: {{ ($thresholds->attendance_weight ?? 0.40) * 100 }}%</div>
+                    <div class='col-6'>
+                        <div class='bg-light p-2 rounded mb-2'>
+                            <div class='text-muted small'>Level Assignment</div>
+                            <div class='fw-bold'>Deterministic (system)</div>
                         </div>
                     </div>
                 </div>
-                <div class="alert alert-info mt-3">
-                    <i class="fas fa-robot me-2"></i>
+                @if($configuredAt)
+                    <div class='text-muted small mb-2'>
+                        Last saved: {{ $configuredAt }}@if($configuredBy) by {{ $configuredBy }}@endif
+                    </div>
+                @endif
+                @if($thresholds->high_threshold !== $thresholds->moderate_threshold + 1)
+                    <div class='alert alert-warning'>
+                        <i class='fas fa-exclamation-triangle me-1'></i>
+                        <strong>Non-contiguous configuration:</strong> the High band starts at
+                        {{ $thresholds->high_threshold }} while the Moderate ceiling is
+                        {{ $thresholds->moderate_threshold }}, so scores
+                        {{ $thresholds->moderate_threshold + 1 }} to {{ $thresholds->high_threshold - 1 }}
+                        fall in an unclaimed gap and are classified Moderate (conservative rule).
+                        Saving normalises the bands to {{ $thresholds->low_threshold }} /
+                        {{ $thresholds->moderate_threshold }} / {{ $thresholds->moderate_threshold + 1 }}.
+                    </div>
+                @endif
+
+                <div class='alert alert-info mt-3 mb-0'>
                     <strong>AI Connection Status:</strong>
-                    <span id="aiStatus">Checking...</span>
+                    <span id='aiStatus' class='badge bg-secondary'>Checking...</span>
                 </div>
             </div>
         </div>
     </div>
 </div>
+
+</div>
 @endsection
 
 @push('scripts')
 <script>
-    document.addEventListener('DOMContentLoaded', function() {
+    const low = document.getElementById('lowThreshold');
+    const moderate = document.getElementById('moderateThreshold');
+    const high = document.getElementById('highThreshold');
+    const lowVal = document.getElementById('lowVal');
+    const modLowVal = document.getElementById('modLowVal');
+    const highVal = document.getElementById('highVal');
+
+    function syncThresholds() {
+        const lowValue = parseInt(low.value, 10);
+        moderate.min = lowValue + 1;
+
+        if (parseInt(moderate.value, 10) <= lowValue) {
+            moderate.value = lowValue + 1;
+        }
+
+        high.value = parseInt(moderate.value, 10) + 1;
+
+        lowVal.textContent = lowValue;
+        modLowVal.textContent = (lowValue + 1) + ' - ' + moderate.value;
+        highVal.textContent = high.value;
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        syncThresholds();
         testAIConnection();
     });
-    
+
     function testAIConnection() {
         const statusEl = document.getElementById('aiStatus');
-        statusEl.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Checking...';
-        
+        statusEl.className = 'badge bg-secondary';
+        statusEl.textContent = 'Checking...';
+
         fetch('{{ route('admin.risk.test-ai') }}')
             .then(response => response.json())
             .then(data => {
-                if (data.success) {
-                    statusEl.innerHTML = '<span class="badge bg-success">Connected</span>';
-                } else {
-                    statusEl.innerHTML = '<span class="badge bg-danger">' + data.message + '</span>';
-                }
+                statusEl.textContent = data.success ? 'Connected' : data.message;
+                statusEl.className = data.success ? 'badge bg-success' : 'badge bg-danger';
             })
             .catch(() => {
-                statusEl.innerHTML = '<span class="badge bg-danger">Connection failed</span>';
+                statusEl.textContent = 'Connection failed';
+                statusEl.className = 'badge bg-danger';
             });
     }
 </script>
