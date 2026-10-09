@@ -33,6 +33,82 @@
     $sharedRoles = json_decode((string) ($report->shared_roles ?? ''), true) ?: [];
 @endphp
 
+{{-- /* CHANGED: mirror the PDF's centered university and AcadAlert header in the on-screen report. */ --}}
+<style>
+    /* CHANGED: keep the preview header centered, proportional, and separated from content by a black rule. */
+    .end-of-term-report-header {
+        color: #000;
+        background: #fff;
+        margin: 0 0 1.5rem;
+    }
+
+    .end-of-term-report-header__row {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        padding: 0.5rem 0 0.75rem;
+    }
+
+    .end-of-term-report-header__udd {
+        width: 72px;
+        height: 72px;
+        object-fit: contain;
+        flex: 0 0 auto;
+    }
+
+    .end-of-term-report-header__title {
+        margin: 0;
+        color: #000;
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 22px;
+        font-weight: 700;
+        line-height: 1.1;
+        white-space: nowrap;
+    }
+
+    .end-of-term-report-header__acadalert {
+        width: 70px;
+        height: auto;
+        flex: 0 0 auto;
+    }
+
+    .end-of-term-report-header__rule {
+        height: 2px;
+        border: 0;
+        margin: 0;
+        background: #000;
+        opacity: 1;
+    }
+
+    @media (max-width: 600px) {
+        .end-of-term-report-header__row {
+            gap: 8px;
+        }
+
+        .end-of-term-report-header__udd {
+            width: 54px;
+            height: 54px;
+        }
+
+        .end-of-term-report-header__title {
+            font-size: clamp(12px, 3.6vw, 18px);
+        }
+
+        .end-of-term-report-header__acadalert {
+            width: 54px;
+        }
+    }
+</style>
+<div class="end-of-term-report-header">
+    <div class="end-of-term-report-header__row">
+        <img class="end-of-term-report-header__udd" src="{{ asset('images/logo/udd-logo.png') }}" alt="Universidad de Dagupan logo">
+        <h1 class="end-of-term-report-header__title">UNIVERSIDAD DE DAGUPAN</h1>
+        <img class="end-of-term-report-header__acadalert" src="{{ asset('images/logo/acadalert_logo.png') }}" alt="AcadAlert logo">
+    </div>
+    <hr class="end-of-term-report-header__rule">
+</div>
+
 <div class="card mb-4">
     <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center flex-wrap gap-2">
         <div>

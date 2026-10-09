@@ -599,6 +599,12 @@ class EndOfTermReportService
             $this->reportTimestamp($meta['generated_at'] ?? null)
         );
 
+        /* CHANGED: supply the existing logo files to the PDF writer's repeated report header. */
+        $pdf->setHeaderLogos(
+            public_path('images/logo/udd-logo.png'),
+            public_path('images/logo/acadalert_logo.png')
+        );
+
         $pdf->setFooter(sprintf(
             'AcadAlert deterministic report engine v%s | %s | Generative AI used: NO',
             $meta['formula_version'],

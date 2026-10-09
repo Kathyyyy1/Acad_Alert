@@ -179,7 +179,8 @@
     justify-content: center;
     width: 38px;
     height: 38px;
-    margin: 0 0.25rem;
+    /* CHANGED: use the navbar group's shared gap instead of extra button margins. */
+    margin: 0;
     padding: 0;
     border: 0;
     border-radius: 999px;
@@ -253,6 +254,18 @@
 }
 
 .navbar .student-bell-toggle i {
+    /* CHANGED: absolutely center the bell glyph independently of inline font metrics. */
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    display: block;
+    width: 1em;
+    height: 1em;
+    margin: 0;
+    padding: 0;
+    line-height: 1;
+    text-align: center;
     font-size: 1.05rem;
 }
 

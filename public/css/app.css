@@ -74,8 +74,24 @@ a:not(.btn):hover {
     min-width: 0;
 }
 
+/* CHANGED: vertically center navbar controls and use equal gaps across roles. */
+.navbar .navbar-nav.ms-auto {
+    align-items: center;
+    column-gap: 0.75rem;
+}
+
+/* CHANGED: center the bell link within its list item like the theme-toggle item. */
+.navbar .navbar-nav.ms-auto > .student-bell {
+    display: flex;
+    align-items: center;
+}
+
 .navbar .navbar-nav.ms-auto > .nav-item.dropdown {
     flex-shrink: 1;
+}
+
+.navbar .navbar-nav.ms-auto > .nav-item.dropdown > .nav-link {
+    padding-left: 0;
 }
 
 .navbar .nav-user-name {

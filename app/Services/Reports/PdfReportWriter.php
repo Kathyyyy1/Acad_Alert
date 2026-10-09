@@ -13,6 +13,8 @@ class PdfReportWriter
     public const MARGIN_TOP = 56;
     public const MARGIN_BOTTOM = 60;
 
+    protected const HEADER_CONTENT_TOP = 124;
+
     protected const FONT_REGULAR = 'F1';
     protected const FONT_BOLD = 'F2';
 
@@ -43,6 +45,8 @@ class PdfReportWriter
     ];
 
     protected array $pages = [];
+
+    protected array $images = [];
 
     protected int $currentPage = -1;
 
@@ -78,7 +82,11 @@ class PdfReportWriter
     {
         $this->pages[] = [];
         $this->currentPage = count($this->pages) - 1;
-        $this->y = self::PAGE_HEIGHT - self::MARGIN_TOP;
+        $this->y = self::PAGE_HEIGHT - ($this->images === [] ? self::MARGIN_TOP : self::HEADER_CONTENT_TOP);
+
+        if ($this->images !== []) {
+            $this->drawHeader();
+        }
     }
 
     public static function contentWidth(): float
@@ -104,6 +112,251 @@ class PdfReportWriter
         $this->footerText = $text;
 
         return $this;
+    }
+
+    /* CHANGED: configure existing transparent PNG logos for the repeated report header. */
+    public function setHeaderLogos(string $uddLogoPath, string $acadAlertLogoPath): static
+    {
+        $this->images = [
+            'UddLogo' => $this->loadPng($uddLogoPath),
+            'AcadAlertLogo' => $this->loadPng($acadAlertLogoPath),
+        ];
+
+        $this->y = self::PAGE_HEIGHT - self::HEADER_CONTENT_TOP;
+        $this->drawHeader();
+
+        return $this;
+    }
+
+    protected function drawHeader(): void
+    {
+        $udd = $this->images['UddLogo'];
+        $acadAlert = $this->images['AcadAlertLogo'];
+        $uddHeight = 54.0;
+        $uddWidth = $uddHeight * $udd['width'] / $udd['height'];
+        $acadAlertHeight = 34.0;
+        $acadAlertWidth = $acadAlertHeight * $acadAlert['width'] / $acadAlert['height'];
+        $title = 'UNIVERSIDAD DE DAGUPAN';
+        $titleSize = 15.0;
+        $titleWidth = $this->measure($title, true, $titleSize);
+        $gap = 12.0;
+        $groupWidth = $uddWidth + $gap + $titleWidth + $gap + $acadAlertWidth;
+        $groupX = (self::PAGE_WIDTH - $groupWidth) / 2;
+        $rowCenter = self::PAGE_HEIGHT - 54.0;
+
+        $this->push(sprintf(
+            'q %.2F 0 0 %.2F %.2F %.2F cm /UddLogo Do Q',
+            $uddWidth,
+            $uddHeight,
+            $groupX,
+            $rowCenter - ($uddHeight / 2)
+        ));
+
+        $titleX = $groupX + $uddWidth + $gap;
+        $this->pages[$this->currentPage][] = $this->textOperator(
+            $title,
+            $titleSize,
+            true,
+            $titleX,
+            $rowCenter - ($titleSize * 0.35)
+        );
+
+        $acadAlertX = $titleX + $titleWidth + $gap;
+        $this->push(sprintf(
+            'q %.2F 0 0 %.2F %.2F %.2F cm /AcadAlertLogo Do Q',
+            $acadAlertWidth,
+            $acadAlertHeight,
+            $acadAlertX,
+            $rowCenter - ($acadAlertHeight / 2)
+        ));
+
+        $this->push(sprintf(
+            '0.8 w %.2F %.2F m %.2F %.2F l S',
+            self::MARGIN_LEFT,
+            self::PAGE_HEIGHT - 94.0,
+            self::PAGE_WIDTH - self::MARGIN_RIGHT,
+            self::PAGE_HEIGHT - 94.0
+        ));
+    }
+
+    protected function loadPng(string $path): array
+    {
+        $png = file_get_contents($path);
+        if ($png === false || substr($png, 0, 8) !== "\x89PNG\r\n\x1A\n") {
+            throw new \RuntimeException('Unable to read report header PNG: ' . $path);
+        }
+
+        $offset = 8;
+        $idat = '';
+        $palette = '';
+        $transparency = '';
+        $header = null;
+
+        while ($offset + 12 <= strlen($png)) {
+            $chunkLength = unpack('Nlength', substr($png, $offset, 4))['length'];
+            $chunkType = substr($png, $offset + 4, 4);
+            $chunkStart = $offset + 8;
+
+            if ($chunkLength < 0 || $chunkStart + $chunkLength + 4 > strlen($png)) {
+                throw new \RuntimeException('Invalid PNG chunk in report header image: ' . $path);
+            }
+
+            $chunkData = substr($png, $chunkStart, $chunkLength);
+            if ($chunkType === 'IHDR') {
+                $header = unpack(
+                    'Nwidth/Nheight/CbitDepth/CcolorType/Ccompression/Cfilter/Cinterlace',
+                    $chunkData
+                );
+            } elseif ($chunkType === 'IDAT') {
+                $idat .= $chunkData;
+            } elseif ($chunkType === 'PLTE') {
+                $palette = $chunkData;
+            } elseif ($chunkType === 'tRNS') {
+                $transparency = $chunkData;
+            }
+
+            $offset = $chunkStart + $chunkLength + 4;
+            if ($chunkType === 'IEND') {
+                break;
+            }
+        }
+
+        if (
+            $header === null
+            || $header['width'] < 1
+            || $header['height'] < 1
+            || $header['bitDepth'] !== 8
+            || $header['compression'] !== 0
+            || $header['filter'] !== 0
+            || $header['interlace'] !== 0
+        ) {
+            throw new \RuntimeException('Unsupported PNG format for report header image: ' . $path);
+        }
+
+        $channels = match ($header['colorType']) {
+            0 => 1,
+            2 => 3,
+            3 => 1,
+            4 => 2,
+            6 => 4,
+            default => throw new \RuntimeException('Unsupported PNG color type for report header image: ' . $path),
+        };
+        $inflated = gzuncompress($idat);
+        $rowLength = $header['width'] * $channels;
+        if ($inflated === false || strlen($inflated) !== ($rowLength + 1) * $header['height']) {
+            throw new \RuntimeException('Unable to decompress report header PNG: ' . $path);
+        }
+
+        $rgb = '';
+        $alpha = '';
+        $previousRow = str_repeat("\0", $rowLength);
+        $offset = 0;
+
+        for ($rowIndex = 0; $rowIndex < $header['height']; $rowIndex++) {
+            $filterType = ord($inflated[$offset]);
+            $row = substr($inflated, $offset + 1, $rowLength);
+            $offset += $rowLength + 1;
+
+            for ($index = 0; $index < $rowLength; $index++) {
+                $left = $index >= $channels ? ord($row[$index - $channels]) : 0;
+                $above = ord($previousRow[$index]);
+                $upperLeft = $index >= $channels ? ord($previousRow[$index - $channels]) : 0;
+                $value = ord($row[$index]);
+
+                $predictor = match ($filterType) {
+                    0 => 0,
+                    1 => $left,
+                    2 => $above,
+                    3 => intdiv($left + $above, 2),
+                    4 => $this->paethPredictor($left, $above, $upperLeft),
+                    default => throw new \RuntimeException('Unsupported PNG filter for report header image: ' . $path),
+                };
+
+                $row[$index] = chr(($value + $predictor) & 0xFF);
+            }
+
+            $previousRow = $row;
+
+            for ($pixel = 0; $pixel < $header['width']; $pixel++) {
+                $pixelOffset = $pixel * $channels;
+                $pixelAlpha = 255;
+
+                switch ($header['colorType']) {
+                    case 0:
+                        $gray = ord($row[$pixelOffset]);
+                        $red = $green = $blue = $gray;
+                        if (strlen($transparency) === 2 && $gray === unpack('n', $transparency)[1]) {
+                            $pixelAlpha = 0;
+                        }
+                        break;
+                    case 2:
+                        $red = ord($row[$pixelOffset]);
+                        $green = ord($row[$pixelOffset + 1]);
+                        $blue = ord($row[$pixelOffset + 2]);
+                        if (
+                            strlen($transparency) === 6
+                            && $red === unpack('n', substr($transparency, 0, 2))[1]
+                            && $green === unpack('n', substr($transparency, 2, 2))[1]
+                            && $blue === unpack('n', substr($transparency, 4, 2))[1]
+                        ) {
+                            $pixelAlpha = 0;
+                        }
+                        break;
+                    case 3:
+                        $paletteOffset = ord($row[$pixelOffset]) * 3;
+                        if ($paletteOffset + 2 >= strlen($palette)) {
+                            throw new \RuntimeException('Invalid PNG palette in report header image: ' . $path);
+                        }
+                        $red = ord($palette[$paletteOffset]);
+                        $green = ord($palette[$paletteOffset + 1]);
+                        $blue = ord($palette[$paletteOffset + 2]);
+                        $pixelAlpha = ord($transparency[ord($row[$pixelOffset])] ?? "\xFF");
+                        break;
+                    case 4:
+                        $gray = ord($row[$pixelOffset]);
+                        $red = $green = $blue = $gray;
+                        $pixelAlpha = ord($row[$pixelOffset + 1]);
+                        break;
+                    case 6:
+                        $red = ord($row[$pixelOffset]);
+                        $green = ord($row[$pixelOffset + 1]);
+                        $blue = ord($row[$pixelOffset + 2]);
+                        $pixelAlpha = ord($row[$pixelOffset + 3]);
+                        break;
+                }
+
+                $rgb .= chr($red) . chr($green) . chr($blue);
+                $alpha .= chr($pixelAlpha);
+            }
+        }
+
+        $hasTransparency = strspn($alpha, "\xFF") !== strlen($alpha);
+        $compressedRgb = gzcompress($rgb, 9);
+        $compressedAlpha = $hasTransparency ? gzcompress($alpha, 9) : null;
+        if ($compressedRgb === false || ($hasTransparency && $compressedAlpha === false)) {
+            throw new \RuntimeException('Unable to encode report header PNG: ' . $path);
+        }
+
+        return [
+            'width' => $header['width'],
+            'height' => $header['height'],
+            'rgb' => $compressedRgb,
+            'alpha' => $compressedAlpha,
+        ];
+    }
+
+    protected function paethPredictor(int $left, int $above, int $upperLeft): int
+    {
+        $estimate = $left + $above - $upperLeft;
+        $leftDistance = abs($estimate - $left);
+        $aboveDistance = abs($estimate - $above);
+        $upperLeftDistance = abs($estimate - $upperLeft);
+
+        if ($leftDistance <= $aboveDistance && $leftDistance <= $upperLeftDistance) {
+            return $left;
+        }
+
+        return $aboveDistance <= $upperLeftDistance ? $above : $upperLeft;
     }
 
     public function measure(string $text, bool $bold = false, float $size = 10.0): float
@@ -417,6 +670,9 @@ class PdfReportWriter
         $objects = [];
         $pageCount = count($this->pages);
         $firstPageObject = 6;
+        $nextObject = $firstPageObject + ($pageCount * 2);
+        $imageResources = [];
+        $imageObjects = [];
 
         $kids = [];
 
@@ -425,23 +681,64 @@ class PdfReportWriter
         $objects[4] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>';
         $objects[5] = $this->infoDictionary();
 
+        foreach ($this->images as $name => $image) {
+            $softMaskReference = '';
+            if ($image['alpha'] !== null) {
+                $softMaskObject = $nextObject++;
+                $objects[$softMaskObject] = sprintf(
+                    '<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceGray '
+                    . '/BitsPerComponent 8 /Filter /FlateDecode /Length %d >>' . "\nstream\n%s\nendstream",
+                    $image['width'],
+                    $image['height'],
+                    strlen($image['alpha']),
+                    $image['alpha']
+                );
+                $softMaskReference = ' /SMask ' . $softMaskObject . ' 0 R';
+            }
+
+            $imageObject = $nextObject++;
+            $imageResources[$name] = $imageObject . ' 0 R';
+            $imageObjects[$imageObject] = sprintf(
+                '<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceRGB '
+                . '/BitsPerComponent 8 /Filter /FlateDecode /Length %d%s >>' . "\nstream\n%s\nendstream",
+                $image['width'],
+                $image['height'],
+                strlen($image['rgb']),
+                $softMaskReference,
+                $image['rgb']
+            );
+        }
+
         foreach ($this->pages as $index => $streamLines) {
             $pageObject = $firstPageObject + ($index * 2);
             $contentObject = $pageObject + 1;
 
             $kids[] = $pageObject . ' 0 R';
 
+            $xObjectResource = $imageResources === []
+                ? ''
+                : ' /XObject << ' . implode(' ', array_map(
+                    static fn ($name, $reference) => '/' . $name . ' ' . $reference,
+                    array_keys($imageResources),
+                    array_values($imageResources)
+                )) . ' >>';
+
             $objects[$pageObject] = sprintf(
                 '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %d %d] '
-                . '/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents %d 0 R >>',
+                . '/Resources << /Font << /F1 3 0 R /F2 4 0 R >>%s >> /Contents %d 0 R >>',
                 self::PAGE_WIDTH,
                 self::PAGE_HEIGHT,
+                $xObjectResource,
                 $contentObject
             );
 
             $stream = implode("\n", $streamLines);
 
             $objects[$contentObject] = "<< /Length " . strlen($stream) . " >>\nstream\n" . $stream . "\nendstream";
+        }
+
+        foreach ($imageObjects as $imageObject => $imageBody) {
+            $objects[$imageObject] = $imageBody;
         }
 
         $objects[2] = sprintf('<< /Type /Pages /Kids [%s] /Count %d >>', implode(' ', $kids), $pageCount);
